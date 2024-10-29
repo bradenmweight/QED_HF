@@ -1,15 +1,76 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from numba import njit
 
 from pyscf import gto, scf, fci
 
+from openms import mqed
+
+def get_QED_HF_ZHY( mol, LAM, WC ):
+    cavity_freq     = np.array([WC]) # a.u.
+    cavity_coupling = np.array([LAM])
+    cavity_vec      = np.array([np.array([0,0,1])])
+    cavity_mode     = np.einsum("m,md->md", cavity_coupling, cavity_vec ) / np.linalg.norm(cavity_vec,axis=-1)
+
+    qedmf = mqed.HF(mol, xc=None, cavity_mode=cavity_mode, cavity_freq=cavity_freq)
+    qedmf.max_cycle = 500
+    qedmf.kernel()
+    if ( qedmf.conv_check == False ):
+        print("   Warning! QED-HF did not converge. Setting energy to NaN.")
+        return float('nan')
+    else:
+        return qedmf.e_tot
 
 
-def do_RHF( mol, LAM, WC ):
+def get_dipole_quadrupole( mol, n_ao ):
+    # Get dipole matrix elements in AO basis with nuclear contribution
+    charges    = mol.atom_charges()
+    coords     = mol.atom_coords()
+    nuc_dipole = np.einsum("a,ad->d", charges, coords) / charges.sum()
+    with mol.with_common_orig(nuc_dipole):
+        dipole_ao  = mol.intor_symmetric("int1e_r", comp=3)
+
+    # Get quadrupole matrix elements in AO basis
+    with mol.with_common_orig(nuc_dipole):
+        quadrupole_ao  = mol.intor_symmetric("int1e_rr", comp=9)#.reshape(3,3,n_ao,n_ao)
+    quadrupole_ao = quadrupole_ao.reshape(3,3,n_ao,n_ao)
+
+    return dipole_ao, quadrupole_ao
+
+@njit
+def to_ortho_ao( U, M, shape ):
+    if ( shape == 1 ):
+        return U.T @ M
+    elif ( shape == 2 ):
+        return U.T @ M @ U
+
+@njit
+def from_ortho_ao( U, M, shape ):
+    if ( shape == 1 ):
+        return U @ M
+    elif ( shape == 2 ):
+        return U @ M @ U.T
+
+@njit
+def eigh( F ):
+    return np.linalg.eigh( F )
+
+def make_RDM1_ao_einsum( C, n_elec_alpha ):
+    return np.einsum("ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha] )
+
+@njit
+def make_RDM1_ao( C, n_elec_alpha ):
+    D = np.zeros( (len(C),len(C)) )
+    for a in range( len(C) ):
+        for b in range( len(C) ):
+            D[a,b] = np.sum(C[a,:n_elec_alpha] * C[b,:n_elec_alpha] )
+    return D
+
+def get_ao_integrals( mol ):
 
     # Get overlap matrix and orthogonalizing transformation matrix
     overlap  = mol.intor('int1e_ovlp')
-    s,u      = np.linalg.eigh(overlap) 
+    s,u      = eigh(overlap) 
     Shalf    = u @ np.diag(1/np.sqrt(s)) @ u.T
 
     # Get nuclear repulsion energy
@@ -30,149 +91,166 @@ def do_RHF( mol, LAM, WC ):
     # Get electron-electron repulsion matrix
     eri = mol.intor('int2e', aosym='s1' ) # Symmetry is turned off to get all possible integrals, (NAO,NAO,NAO,NAO)
 
-    # Get dipole matrix elements in AO basis with nuclear contribution
-    charges    = mol.atom_charges()
-    coords     = mol.atom_coords()
-    nuc_dipole = np.einsum("a,ad->d", charges, coords) #/ charges.sum()
-    dipole_ao  = mol.intor_symmetric("int1e_r", comp=3)
-    dipole_ao  = np.array([-1*dipole_ao[d,:,:] + nuc_dipole[d]*np.eye(n_ao) for d in range(3)])
+    # Get dipole and quadrupole integrals
+    dip_ao, quad_ao = get_dipole_quadrupole( mol, n_ao )
 
-    # Get quadrupole matrix elements in AO basis
-    quadrupole_ao  = mol.intor_symmetric("int1e_rr", comp=9).reshape(3,3,n_ao,n_ao)
-    nuc_quadrupole = np.einsum("a,ax,by,b->xy", charges, coords, coords, charges) #/ charges.sum()
-    quadrupole_ao  = np.array([-1*quadrupole_ao[x,y,:,:] + nuc_quadrupole[x,y]*np.eye(n_ao) for x in range(3) for y in range(3)])
-    quadrupole_ao  = quadrupole_ao.reshape(3,3,n_ao,n_ao)
-
-
-
-
-
-    # Get core Hamiltonian
+    # Construct core electronic Hamiltonian
     h1e = T_AO + V_en
 
-    # Choose core as guess for Fock
+    return Shalf, h1e, eri, dip_ao, quad_ao, n_elec_alpha, nuclear_repulsion_energy
+
+def do_QED_RHF( mol, LAM, WC, doCS=True ):
+
+    Shalf, h1e, eri, dip_ao, quad_ao, n_elec_alpha, nuclear_repulsion_energy = get_ao_integrals( mol )
+
+    # Choose core as guess for Fock matrix
     F = h1e
 
-    # Rotate Fock to orthogonal basis
-    F_ORTHO = Shalf.T @ F @ Shalf
+    # Rotate Fock matrix to orthogonal ao basis
+    F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
 
     # Diagonalize Fock
-    eps, C = np.linalg.eigh( F_ORTHO )
+    eps, C = eigh( F_ORTHO )
 
     # Rotate all MOs back to non-orthogonal AO basis
-    C = Shalf @ C
+    C = from_ortho_ao( Shalf, C, shape=1 )
 
     # Get density matrix in AO basis
-    D    = np.einsum( "ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha] )
+    D    = make_RDM1_ao( C, n_elec_alpha )
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 100
+    maxiter       = 500
 
-    old_energy = 0.5 * np.einsum("ab,ab->", D, h1e + F ) + nuclear_repulsion_energy
+    old_energy = 0.5 * np.einsum("ab,ab->", D, 2*h1e ) + nuclear_repulsion_energy
     old_D = D.copy()
 
     #print("    Guess Energy: %20.12f" % old_energy)
     for iter in range( maxiter ):
 
+        # DSE
+        if ( doCS == True ):
+            AVEdipole = np.einsum( 'pq,pq->', D, dip_ao[-1,:,:] )
+        else:
+            AVEdipole = 0.0
+        
+        DSE_FACTOR = 0.5 * LAM**2
+        h1e_DSE =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[-1,:,:] + quad_ao[-1,-1,:,:] ) 
+        eri_DSE = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao[-1,:,:], dip_ao[-1,:,:] )
+
         # Coulomb matrix
-        J = np.einsum( 'rs,pqrs->pq', D, eri )
+        J     = np.einsum( 'rs,pqrs->pq', D, eri )
+        DSE_J = np.einsum( 'rs,pqrs->pq', D, eri_DSE )
 
         # Exchange matrix
-        K = np.einsum( 'rs,psrq->pq', D, eri )
+        K     = np.einsum( 'rs,prsq->pq', D, eri )
+        DSE_K = np.einsum( 'rs,prsq->pq', D, eri_DSE )
 
-        # DSE
-        AVEdipole      = np.einsum( 'pq,pq->', D, dipole_ao[-1,:,:] )
-        dipole_shifted = dipole_ao[-1,:,:] #- np.eye(n_ao)*AVEdipole
-
-        DSE_1e  = -0.5 * LAM**2 * quadrupole_ao[-1,-1,:,:] 
-        DSE_J   =  0 * 0.5 * LAM**2 * np.einsum( 'rs,pq,rs->pq', D, dipole_shifted, dipole_shifted )
-        DSE_K   =  0.5 * LAM**2 * np.einsum( 'rs,ps,rq->pq', D, dipole_shifted, dipole_shifted )
-
-        # Fock matrix for RHF
-        F = (h1e + DSE_1e) + 2 * (J + DSE_J) - (K + DSE_K)
+        # Fock matrix
+        F  = h1e     + 2 * J     - K
+        F += h1e_DSE +     DSE_J - DSE_K
 
         # Transfom Fock matrix to orthogonal basis
-        F_ORTHO = Shalf.T @ F @ Shalf
+        F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
 
         # Diagonalize Fock matrix
-        eps, C = np.linalg.eigh( F_ORTHO )
+        eps, C = eigh( F_ORTHO )
 
         # Rotate MOs back to non-orthogonal AO basis
-        C = Shalf @ C
+        C = from_ortho_ao( Shalf, C, shape=1 )
 
         # Get density matrix in AO basis
-        D  = np.einsum("ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha])
+        D = make_RDM1_ao( C, n_elec_alpha )
 
         # Get current energy for RHF
-        energy = np.einsum("ab,ab->", D, 2*(h1e + DSE_1e) + 2*(J + DSE_J) - (K + DSE_K) ) + nuclear_repulsion_energy
+        energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K ) + nuclear_repulsion_energy
+        energy += np.einsum("ab,ab->", D, 2*h1e_DSE + 2*DSE_J - DSE_K )
+        energy += 0* DSE_FACTOR*AVEdipole**2 + 0.5 * WC
 
-        dE = np.abs( energy - old_energy )
+        dE = energy - old_energy
         dD = np.linalg.norm( D - old_D )
-
-        #print( '    Iteration %3d: Energy = %4.12f, Energy change = %1.5e, Density change = %1.5e' % (iter, energy, dE, dD ) )
 
         old_energy = energy
         old_D      = D.copy()
 
-        if ( iter > 2 and dE < e_convergence and dD < d_convergence ):
-            #print('    SCF iterations converged!')
+        if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break
-        else :
-            if ( iter > maxiter ):
-                #print('    SCF iterations did not converge...')
-                break
+        if ( iter > maxiter ):
+            print("FAILURE: QED-HF (Braden) DID NOT CONVERGE")
+            break
 
-    myRHF = scf.RHF( mol )
-    e_rhf = myRHF.kernel()
-    # Full configuration interaction
-    e_fci = fci.FCI( myRHF ).kernel()[0]
-    print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
-    print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
+    myRHF   = scf.RHF( mol )
+    e_qedhf = get_QED_HF_ZHY( mol, LAM, WC )
+    e_rhf   = myRHF.kernel() + 0.5 * WC
+    e_fci   = fci.FCI( myRHF ).kernel()[0] + 0.5 * WC
+    #print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
+    #print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
     print('    * RHF Total Energy (Braden): %20.12f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
-    return energy, e_rhf, e_fci
+
+    return energy, e_qedhf, e_rhf, e_fci
 
 
 if (__name__ == '__main__' ):
-    # From PySCF, get all required AO integrals
     mol = gto.Mole()
     mol.basis = 'ccpvdz'
     mol.unit = 'Bohr'
     mol.symmetry = False
 
-    # RHH_LIST   = np.arange(0.75, 10.05, 0.05)
-    # EHF_BRADEN = np.zeros_like(RHH_LIST)
-    # EHF_PYSCF  = np.zeros_like(RHH_LIST)
-    # EFCI_PYSCF  = np.zeros_like(RHH_LIST)
-    # for Ri,R in enumerate( RHH_LIST ):
-    #     print("Working on R = %1.2f" % R)
-    #     mol.atom = 'H 0 0 0; H 0 0 %1.8f' % R
-    #     mol.build()
-    #     EHF_BRADEN[Ri], EHF_PYSCF[Ri], EFCI_PYSCF[Ri] = do_RHF( mol, 0.05, 0.1 )
+    dL           = 0.05
+    LAM_LIST     = np.arange(0.0, 0.2+dL, dL)
+    #R_LIST   = np.arange(0.75, 10.25, 0.25)
+    R_LIST   = np.arange(2, 7.25, 0.25)
+    QEDHF_BRADEN = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    QEDHF_ZHY    = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    EHF_PYSCF    = np.zeros( (len(R_LIST)) )
+    EFCI_PYSCF   = np.zeros( (len(R_LIST)) )
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        for Ri,R in enumerate( R_LIST ):
+            print("Working on R = %1.2f" % R)
+            mol.atom = 'Li 0 0 0; H 0 0 %1.8f' % R
+            mol.build()
+            QEDHF_BRADEN[LAMi,Ri], QEDHF_ZHY[LAMi,Ri], EHF_PYSCF[Ri], EFCI_PYSCF[Ri] = do_QED_RHF( mol, LAM, 0.1 )
     
-    # plt.plot( RHH_LIST, EHF_PYSCF, label="RHF PySCF" )
-    # plt.plot( RHH_LIST, EHF_BRADEN, "--", label="RHF Braden" )
-    # plt.plot( RHH_LIST, EFCI_PYSCF, label="FCI PySCF" )
-    # plt.legend()
-    # plt.savefig("H2_dissociation_curve.jpg", dpi=300)
-    # plt.clf()
+    plt.plot( R_LIST, EHF_PYSCF, c='black', lw=8, alpha=0.5, label="RHF (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
+    plt.plot( R_LIST, EFCI_PYSCF, c='blue', lw=8, alpha=0.5, label="FCI (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        plt.plot( R_LIST, QEDHF_ZHY[LAMi,:], "o", c="black", label="QED-RHF (Yu)" * (LAMi==0) )
+        plt.plot( R_LIST, QEDHF_BRADEN[LAMi,:], "-", c="red", label="QED-RHF (Braden)" * (LAMi==0) )
+    plt.xlabel("Nuclear Separation, $R$ (a.u.)", fontsize=15)
+    plt.ylabel("Energy, $E_0$ (a.u.)", fontsize=15)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig("H2_dissociation_curve.jpg", dpi=300)
+    plt.clf()
+
+    exit()
 
 
 
-
-    LAM_LIST   = np.arange(0.0, 0.15, 0.01)
-    EHF_BRADEN = np.zeros_like(LAM_LIST)
-    EHF_PYSCF  = np.zeros_like(LAM_LIST)
-    EFCI_PYSCF = np.zeros_like(LAM_LIST)
-    mol.atom = 'H 0 0 0; H 0 0 2.8'
+    dL           = 0.1
+    LAM_LIST     = np.arange(0.0, 1+dL, dL)
+    QEDHF_BRADEN = np.zeros_like(LAM_LIST)
+    QEDHF_ZHY    = np.zeros_like(LAM_LIST)
+    RHH          = 2.8
+    WC           = 0.1
+    #mol.atom     = 'H 0 0 0; H 0 0 %1.3f' % ( RHH )
+    mol.atom     = 'Li 0 0 %1.3f; H 0 0 %1.3f' % ( -3/4*RHH, 1/4*RHH )
+    #mol.atom     = 'Li 0 0 %1.3f; Li 0 0 %1.3f' % ( -2, 2 )
     mol.build()
 
     for LAMi,LAM in enumerate( LAM_LIST ):
         print("Working on LAM = %1.2f" % LAM)
-        EHF_BRADEN[LAMi], EHF_PYSCF[LAMi], EFCI_PYSCF[LAMi] = do_RHF( mol, LAM, 0.1 )
+        QEDHF_BRADEN[LAMi], QEDHF_ZHY[LAMi], e_rhf, e_fci = do_QED_RHF( mol, LAM, WC )
     
-    plt.plot( LAM_LIST, EHF_BRADEN - EHF_BRADEN[0], "-" )
+    plt.plot( LAM_LIST, LAM_LIST*0 + e_rhf, "-", c='black', lw=5, alpha=0.5, label="RHF (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
+    # plt.plot( LAM_LIST, LAM_LIST*0 + e_fci, "-", c='blue', lw=5, alpha=0.5, label="FCI (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
+    plt.plot( LAM_LIST, QEDHF_BRADEN, "-", c='black', label="QED-RHF (Braden)" )
+    plt.plot( LAM_LIST, QEDHF_ZHY, "o", c='black', label="QED-RHF (Yu)" )
+    # plt.plot( LAM_LIST, QEDHF_BRADEN - QEDHF_ZHY, "-", c='black', label="QED-RHF Yu" )
+    plt.legend()
+    plt.xlabel("Coupling Strength, $\\lambda$ (a.u.)", fontsize=15)
+    plt.ylabel("Energy, $E_0$ (a.u.)", fontsize=15)
     plt.tight_layout()
     plt.savefig("H2_LAM_SCAN.jpg", dpi=300)
     plt.clf()
