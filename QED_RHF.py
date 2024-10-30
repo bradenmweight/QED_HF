@@ -21,7 +21,6 @@ def get_QED_HF_ZHY( mol, LAM, WC ):
     else:
         return qedmf.e_tot
 
-
 def get_dipole_quadrupole( mol, n_ao ):
     # Get dipole matrix elements in AO basis with nuclear contribution
     charges    = mol.atom_charges()
@@ -99,7 +98,7 @@ def get_ao_integrals( mol ):
 
     return Shalf, h1e, eri, dip_ao, quad_ao, n_elec_alpha, nuclear_repulsion_energy
 
-def do_QED_RHF( mol, LAM, WC, doCS=True ):
+def do_QED_RHF( mol, LAM, WC, do_coherent_state=True ):
 
     Shalf, h1e, eri, dip_ao, quad_ao, n_elec_alpha, nuclear_repulsion_energy = get_ao_integrals( mol )
 
@@ -120,16 +119,16 @@ def do_QED_RHF( mol, LAM, WC, doCS=True ):
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 500
+    maxiter       = 25
 
-    old_energy = 0.5 * np.einsum("ab,ab->", D, 2*h1e ) + nuclear_repulsion_energy
+    old_energy = np.einsum("ab,ab->", D, 2*h1e ) + nuclear_repulsion_energy
     old_D = D.copy()
 
     #print("    Guess Energy: %20.12f" % old_energy)
     for iter in range( maxiter ):
 
         # DSE
-        if ( doCS == True ):
+        if ( do_coherent_state == True ):
             AVEdipole = np.einsum( 'pq,pq->', D, dip_ao[-1,:,:] )
         else:
             AVEdipole = 0.0
@@ -163,9 +162,11 @@ def do_QED_RHF( mol, LAM, WC, doCS=True ):
         D = make_RDM1_ao( C, n_elec_alpha )
 
         # Get current energy for RHF
-        energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K ) + nuclear_repulsion_energy
+        energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K )
         energy += np.einsum("ab,ab->", D, 2*h1e_DSE + 2*DSE_J - DSE_K )
-        energy += 0* DSE_FACTOR*AVEdipole**2 + 0.5 * WC
+        energy += nuclear_repulsion_energy
+        energy += DSE_FACTOR*AVEdipole**2
+        energy += 0.5 * WC
 
         dE = energy - old_energy
         dD = np.linalg.norm( D - old_D )
@@ -175,82 +176,21 @@ def do_QED_RHF( mol, LAM, WC, doCS=True ):
 
         if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break
-        if ( iter > maxiter ):
+        if ( iter == maxiter-1 ):
             print("FAILURE: QED-HF (Braden) DID NOT CONVERGE")
+            return float("nan")
             break
 
-    myRHF   = scf.RHF( mol )
-    e_qedhf = get_QED_HF_ZHY( mol, LAM, WC )
-    e_rhf   = myRHF.kernel() + 0.5 * WC
-    e_fci   = fci.FCI( myRHF ).kernel()[0] + 0.5 * WC
+    #myRHF   = scf.RHF( mol )
+    #e_qedhf = get_QED_HF_ZHY( mol, LAM, WC )
+    #e_rhf   = myRHF.kernel() + 0.5 * WC
+    #e_fci   = fci.FCI( myRHF ).kernel()[0] + 0.5 * WC
     #print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
     #print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
-    print('    * RHF Total Energy (Braden): %20.12f' % (energy))
+    print('    * QED-RHF Total Energy (Braden): %20.12f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
 
-    return energy, e_qedhf, e_rhf, e_fci
-
+    return energy#, e_qedhf, e_rhf, e_fci
 
 if (__name__ == '__main__' ):
-    mol = gto.Mole()
-    mol.basis = 'ccpvdz'
-    mol.unit = 'Bohr'
-    mol.symmetry = False
-
-    dL           = 0.05
-    LAM_LIST     = np.arange(0.0, 0.2+dL, dL)
-    #R_LIST   = np.arange(0.75, 10.25, 0.25)
-    R_LIST   = np.arange(2, 7.25, 0.25)
-    QEDHF_BRADEN = np.zeros( (len(LAM_LIST),len(R_LIST)) )
-    QEDHF_ZHY    = np.zeros( (len(LAM_LIST),len(R_LIST)) )
-    EHF_PYSCF    = np.zeros( (len(R_LIST)) )
-    EFCI_PYSCF   = np.zeros( (len(R_LIST)) )
-    for LAMi,LAM in enumerate( LAM_LIST ):
-        for Ri,R in enumerate( R_LIST ):
-            print("Working on R = %1.2f" % R)
-            mol.atom = 'Li 0 0 0; H 0 0 %1.8f' % R
-            mol.build()
-            QEDHF_BRADEN[LAMi,Ri], QEDHF_ZHY[LAMi,Ri], EHF_PYSCF[Ri], EFCI_PYSCF[Ri] = do_QED_RHF( mol, LAM, 0.1 )
-    
-    plt.plot( R_LIST, EHF_PYSCF, c='black', lw=8, alpha=0.5, label="RHF (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
-    plt.plot( R_LIST, EFCI_PYSCF, c='blue', lw=8, alpha=0.5, label="FCI (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
-    for LAMi,LAM in enumerate( LAM_LIST ):
-        plt.plot( R_LIST, QEDHF_ZHY[LAMi,:], "o", c="black", label="QED-RHF (Yu)" * (LAMi==0) )
-        plt.plot( R_LIST, QEDHF_BRADEN[LAMi,:], "-", c="red", label="QED-RHF (Braden)" * (LAMi==0) )
-    plt.xlabel("Nuclear Separation, $R$ (a.u.)", fontsize=15)
-    plt.ylabel("Energy, $E_0$ (a.u.)", fontsize=15)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig("H2_dissociation_curve.jpg", dpi=300)
-    plt.clf()
-
-    exit()
-
-
-
-    dL           = 0.1
-    LAM_LIST     = np.arange(0.0, 1+dL, dL)
-    QEDHF_BRADEN = np.zeros_like(LAM_LIST)
-    QEDHF_ZHY    = np.zeros_like(LAM_LIST)
-    RHH          = 2.8
-    WC           = 0.1
-    #mol.atom     = 'H 0 0 0; H 0 0 %1.3f' % ( RHH )
-    mol.atom     = 'Li 0 0 %1.3f; H 0 0 %1.3f' % ( -3/4*RHH, 1/4*RHH )
-    #mol.atom     = 'Li 0 0 %1.3f; Li 0 0 %1.3f' % ( -2, 2 )
-    mol.build()
-
-    for LAMi,LAM in enumerate( LAM_LIST ):
-        print("Working on LAM = %1.2f" % LAM)
-        QEDHF_BRADEN[LAMi], QEDHF_ZHY[LAMi], e_rhf, e_fci = do_QED_RHF( mol, LAM, WC )
-    
-    plt.plot( LAM_LIST, LAM_LIST*0 + e_rhf, "-", c='black', lw=5, alpha=0.5, label="RHF (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
-    # plt.plot( LAM_LIST, LAM_LIST*0 + e_fci, "-", c='blue', lw=5, alpha=0.5, label="FCI (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
-    plt.plot( LAM_LIST, QEDHF_BRADEN, "-", c='black', label="QED-RHF (Braden)" )
-    plt.plot( LAM_LIST, QEDHF_ZHY, "o", c='black', label="QED-RHF (Yu)" )
-    # plt.plot( LAM_LIST, QEDHF_BRADEN - QEDHF_ZHY, "-", c='black', label="QED-RHF Yu" )
-    plt.legend()
-    plt.xlabel("Coupling Strength, $\\lambda$ (a.u.)", fontsize=15)
-    plt.ylabel("Energy, $E_0$ (a.u.)", fontsize=15)
-    plt.tight_layout()
-    plt.savefig("H2_LAM_SCAN.jpg", dpi=300)
-    plt.clf()
+    pass

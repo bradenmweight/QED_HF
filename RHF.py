@@ -67,7 +67,7 @@ def do_RHF( mol ):
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 100
+    maxiter       = 50
 
     old_energy = 0.5 * np.einsum("ab,ab->", D, h1e + F ) + nuclear_repulsion_energy
     old_D = D.copy()
@@ -98,8 +98,8 @@ def do_RHF( mol ):
         D  = np.einsum("ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha])
 
         # Get current energy for RHF
-        # H = 0.5*(h + F) = h + 0.5 * (J - K) = h + 0.5 * V_ee
-        energy = np.einsum("ab,ab->", D, 2*h1e + 2*J - K ) + nuclear_repulsion_energy
+        energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K ) 
+        energy += nuclear_repulsion_energy
 
         dE = np.abs( energy - old_energy )
         dD = np.linalg.norm( D - old_D )
@@ -114,39 +114,18 @@ def do_RHF( mol ):
             break
         else :
             if ( iter > maxiter ):
-                #print('    SCF iterations did not converge...')
-                break
+                print('    SCF iterations did not converge...')
+                return float("nan")
 
-    myRHF = scf.RHF( mol )
-    e_rhf = myRHF.kernel()
+    #myRHF = scf.RHF( mol )
+    #e_rhf = myRHF.kernel()
     # Full configuration interaction
-    e_fci = fci.FCI( myRHF ).kernel()[0]
-    print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
-    print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
-    print('    * RHF Total Energy (Braden): %20.12f' % (energy))
+    #e_fci = fci.FCI( myRHF ).kernel()[0]
+    #print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
+    #print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
+    print('    *     RHF Total Energy (Braden): %20.12f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
-    return energy, e_rhf, e_fci
-
+    return energy#, e_rhf, e_fci
 
 if (__name__ == '__main__' ):
-    # From PySCF, get all required AO integrals
-    mol = gto.Mole()
-    mol.basis = 'ccpvtz'
-    mol.unit = 'Bohr'
-    mol.symmetry = False
-
-    RHH_LIST   = np.arange(0.75, 10.05, 0.05)
-    EHF_BRADEN = np.zeros_like(RHH_LIST)
-    EHF_PYSCF  = np.zeros_like(RHH_LIST)
-    EFCI_PYSCF  = np.zeros_like(RHH_LIST)
-    for Ri,R in enumerate( RHH_LIST ):
-        print("Working on R = %1.2f" % R)
-        mol.atom = 'H 0 0 0; H 0 0 %1.8f' % R
-        mol.build()
-        EHF_BRADEN[Ri], EHF_PYSCF[Ri], EFCI_PYSCF[Ri] = do_RHF( mol )
-    
-    plt.plot( RHH_LIST, EHF_PYSCF, label="RHF PySCF" )
-    plt.plot( RHH_LIST, EHF_BRADEN, "--", label="RHF Braden" )
-    plt.plot( RHH_LIST, EFCI_PYSCF, label="FCI PySCF" )
-    plt.legend()
-    plt.savefig("H2_dissociation_curve.jpg", dpi=300)
+    pass
