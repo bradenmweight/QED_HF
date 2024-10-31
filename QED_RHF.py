@@ -119,7 +119,7 @@ def do_QED_RHF( mol, LAM, WC, do_coherent_state=True ):
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 25
+    maxiter       = 200
 
     old_energy = np.einsum("ab,ab->", D, 2*h1e ) + nuclear_repulsion_energy
     old_D = D.copy()

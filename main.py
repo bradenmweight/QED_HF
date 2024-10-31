@@ -1,5 +1,6 @@
 import numpy as np
 import subprocess as sp
+import matplotlib
 from matplotlib import pyplot as plt
 
 from pyscf import gto
@@ -17,64 +18,146 @@ def get_Globals():
 
     global LAM_LIST, WC
     WC           = 0.1 # a.u.
-    dL           = 0.025 # a.u.
-    LAM_LIST     = np.arange(0.0, 0.5+dL, dL)
+    dL           = 0.025 # 0.01 # a.u.
+    LAM_LIST     = np.array([0.0]) # np.arange(0.0, 0.1+dL, dL)
 
     global DATA_DIR
     DATA_DIR = "PLOTS_DATA"
     sp.call( f"mkdir -p {DATA_DIR}", shell=True )
 
-def do_H2_Dissociation( mol ):
 
-    R_LIST       = np.arange(0.5, 6.1, 0.025)
+def do_plots( R_LIST, QEDRHF, QEDUHF, QEDUHF_S2, QEDUHF_ss1, RHF, UHF, UHF_S2, UHF_ss1, title="" ):
+    title = title.strip("_")
 
-    QEDRHF_BRADEN = np.zeros( (len(LAM_LIST),len(R_LIST)) )
-    QEDUHF_BRADEN = np.zeros( (len(LAM_LIST),len(R_LIST)) )
-    RHF_BRADEN    = np.zeros( len(R_LIST) )
-    UHF_BRADEN    = np.zeros( len(R_LIST) )
-    for Ri,R in enumerate( R_LIST ):
-        mol.atom = 'H 0 0 0; H 0 0 %1.8f' % R
-        mol.build()
-        RHF_BRADEN[Ri]         = do_RHF( mol )
-        UHF_BRADEN[Ri]         = do_UHF( mol )
-        for LAMi,LAM in enumerate( LAM_LIST ):
-            QEDRHF_BRADEN[LAMi,Ri] = do_QED_RHF( mol, LAM, WC, do_coherent_state=do_coherent_state )
-            QEDUHF_BRADEN[LAMi,Ri] = do_QED_UHF( mol, LAM, WC, do_coherent_state=do_coherent_state )
-    
-
-    plt.plot( R_LIST, RHF_BRADEN[:] + WC/2, "-", lw=8, alpha=0.5, c="black", label="RHF" )
-    plt.plot( R_LIST, UHF_BRADEN[:] + WC/2, "-", lw=8, alpha=0.5, c="blue", label="UHF" )
+    plt.plot( R_LIST, RHF[:] + WC/2, "-", lw=8, alpha=0.5, c="black", label="RHF" )
+    plt.plot( R_LIST, UHF[:] + WC/2, "-", lw=8, alpha=0.5, c="blue", label="UHF" )
     for LAMi,LAM in enumerate( LAM_LIST ):
-        plt.plot( R_LIST, QEDRHF_BRADEN[LAMi,:], "-", ms=3, markerfacecolor='none', c="black", label="QED-RHF" * (LAMi==0) )
-        plt.plot( R_LIST, QEDUHF_BRADEN[LAMi,:], "-", ms=3, markerfacecolor='none', c="blue", label="QED-UHF" * (LAMi==0) )
+        plt.plot( R_LIST, QEDRHF[LAMi,:], "-", ms=3, markerfacecolor='none', c="black", label="QED-RHF" * (LAMi==0) )
+        plt.plot( R_LIST, QEDUHF[LAMi,:], "-", ms=3, markerfacecolor='none', c="blue", label="QED-UHF" * (LAMi==0) )
     plt.xlabel("Nuclear Separation, $R$ (a.u.)", fontsize=15)
     plt.ylabel("Energy, $E_0$ (a.u.)", fontsize=15)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(f"{DATA_DIR}/H2_PES.jpg", dpi=300)
+    plt.savefig(f"{DATA_DIR}/{title}_PES.jpg", dpi=300)
     plt.clf()
+    outlist = [R_LIST]
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        outlist.append( QEDRHF[LAMi,:] )
+    np.savetxt(f"{DATA_DIR}/{title}_PES_RHF.dat", np.array(outlist).T, fmt="%1.8f", header="R_LIST (Bohr), E_RHF (a.u.)")
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        outlist.append( QEDUHF[LAMi,:] )
+    np.savetxt(f"{DATA_DIR}/{title}_PES_UHF.dat", np.array(outlist).T, fmt="%1.8f", header="R_LIST (Bohr), E_UHF (a.u.)")
+
 
     for LAMi,LAM in enumerate( LAM_LIST ):
-        plt.semilogy( R_LIST, QEDRHF_BRADEN[LAMi,:] - QEDUHF_BRADEN[LAMi,:], "-", label="$\\lambda$ = %1.3f" % LAM )
+        plt.semilogy( R_LIST, QEDRHF[LAMi,:] - QEDUHF[LAMi,:], "-", label="$\\lambda$ = %1.3f" % LAM )
     plt.xlabel("Nuclear Separation, $R$ (a.u.)", fontsize=15)
     plt.ylabel("$E_\\mathrm{QED-RHF}$ - $E_\\mathrm{QED-UHF}$ (a.u.)", fontsize=15)
     plt.ylim(1e-6,0.5)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(f"{DATA_DIR}/H2_PES_RHF-UHF.jpg", dpi=300)
+    plt.savefig(f"{DATA_DIR}/{title}_PES_RHF-UHF.jpg", dpi=300)
     plt.clf()
+    outlist = [R_LIST]
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        outlist.append( QEDRHF[LAMi,:] - QEDUHF[LAMi,:] )
+    np.savetxt(f"{DATA_DIR}/{title}_PES_RHF-UHF.dat", np.array(outlist).T, fmt="%1.8f", header="R_LIST (Bohr), E_RHF-E_UHF (a.u.) for LAM (a.u.) " + " ".join(["%1.3f" % LAM for LAM in LAM_LIST]))
 
     CF_POINTS = np.zeros( len(LAM_LIST) )
     for LAMi,LAM in enumerate( LAM_LIST ):
         for Ri,R in enumerate( R_LIST ):
-            if ( QEDRHF_BRADEN[LAMi,Ri] - QEDUHF_BRADEN[LAMi,Ri] > 1e-6 ):        
+            if ( QEDRHF[LAMi,Ri] - QEDUHF[LAMi,Ri] > 1e-6 ):        
                 CF_POINTS[LAMi] = R
+                break
+
     plt.plot( LAM_LIST, CF_POINTS, "o-" )
     plt.xlabel("Coupling Strength, $\\lambda$ (a.u.)", fontsize=15)
     plt.ylabel("Coulson-Fischer Points, $R_\\mathrm{CF}$ (a.u.)", fontsize=15)
     plt.tight_layout()
-    plt.savefig(f"{DATA_DIR}/H2_PES_CFPs.jpg", dpi=300)
+    plt.savefig(f"{DATA_DIR}/{title}_PES_CFPs.jpg", dpi=300)
     plt.clf()
+    np.savetxt(f"{DATA_DIR}/{title}_PES_CFPs.dat", np.c_[LAM_LIST, CF_POINTS], fmt="%1.8f", header="LAM_LIST (a.u.), CF_POINTS (Bohr)")
+
+
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        plt.plot( R_LIST, QEDUHF_S2[LAMi,:], "o-", label="$\\lambda$ = %1.3f" % LAM )
+    plt.xlabel("Nuclear Separation, $R$ (a.u.)", fontsize=15)
+    plt.ylabel("Spin-Squared Operator, $\\langle \\hat{S}^2 \\rangle$", fontsize=15)
+    plt.tight_layout()
+    plt.savefig(f"{DATA_DIR}/{title}_PES_S2.jpg", dpi=300)
+    plt.clf()
+    outlist = [R_LIST]
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        outlist.append( QEDUHF_S2[LAMi,:] )
+    np.savetxt(f"{DATA_DIR}/{title}_PES_S2.dat", np.array(outlist).T, fmt="%1.8f", header="R (a.u.), S2-Value for LAM (a.u.) = " + " ".join(["%1.3f" % LAM for LAM in LAM_LIST]) )
+    outlist = [R_LIST]
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        outlist.append( QEDUHF_ss1[LAMi,:] )
+    np.savetxt(f"{DATA_DIR}/{title}_PES_ss1.dat", np.array(outlist).T, fmt="%1.8f", header="R (a.u.), s(s+1)-Value for LAM (a.u.) = " + " ".join(["%1.3f" % LAM for LAM in LAM_LIST]) )
+
+
+    cmap = plt.get_cmap("brg")
+    fig1, ax1 = plt.subplots()
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        ax1.plot( R_LIST, QEDRHF[LAMi,:], "-", lw=2, c="black", label="QED-RHF" * (LAMi==0) )
+        ax1.scatter( R_LIST, QEDUHF[LAMi,:], c=cmap(QEDUHF_S2[LAMi,:]), label="QED-UHF" * (LAMi==0) )
+    plt.xlabel("Nuclear Separation, $R$ (a.u.)", fontsize=15)
+    plt.ylabel("Energy, $E_0$ (a.u.)", fontsize=15)
+    plt.legend()
+    cbar = fig1.colorbar(matplotlib.cm.ScalarMappable(cmap=cmap),ax=ax1,pad=0.01)
+    cbar.set_label(label='Spin-Squared Operator, $\\langle \\hat{S}^2 \\rangle$', size=15)
+    plt.tight_layout()
+    plt.savefig(f"{DATA_DIR}/{title}_PES_S2_Colored.jpg", dpi=300)
+    plt.clf()
+
+
+def do_H2_Dissociation( mol ):
+
+    R_LIST       = np.arange(0.6, 5.0, 0.1)
+
+    QEDRHF      = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    QEDUHF      = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    QEDUHF_S2   = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    QEDUHF_ss1  = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    RHF         = np.zeros( len(R_LIST) )
+    UHF         = np.zeros( len(R_LIST) )
+    UHF_S2      = np.zeros( len(R_LIST) )
+    UHF_ss1     = np.zeros( len(R_LIST) )
+    for Ri,R in enumerate( R_LIST ):
+        mol.atom = 'H 0 0 0; H 0 0 %1.8f' % R
+        mol.build()
+        RHF[Ri]                          = do_RHF( mol )
+        UHF[Ri], UHF_S2[Ri], UHF_ss1[Ri] = do_UHF( mol )
+        for LAMi,LAM in enumerate( LAM_LIST ):
+            QEDRHF[LAMi,Ri] = do_QED_RHF( mol, LAM, WC, do_coherent_state=do_coherent_state )
+            QEDUHF[LAMi,Ri], QEDUHF_S2[LAMi,Ri], QEDUHF_ss1[LAMi,Ri] = do_QED_UHF( mol, LAM, WC, do_coherent_state=do_coherent_state )
+
+    do_plots( R_LIST, QEDRHF, QEDUHF, QEDUHF_S2, QEDUHF_ss1, RHF, UHF, UHF_S2, UHF_ss1, title="H2_" )
+
+
+def do_LiH_Dissociation( mol ):
+
+    R_LIST       = np.arange(1.5, 15.0, 0.1)
+
+    QEDRHF      = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    QEDUHF      = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    QEDUHF_S2   = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    QEDUHF_ss1  = np.zeros( (len(LAM_LIST),len(R_LIST)) )
+    RHF         = np.zeros( len(R_LIST) )
+    UHF         = np.zeros( len(R_LIST) )
+    UHF_S2      = np.zeros( len(R_LIST) )
+    UHF_ss1     = np.zeros( len(R_LIST) )
+    for Ri,R in enumerate( R_LIST ):
+        mol.atom = 'Li 0 0 0; H 0 0 %1.8f' % R
+        mol.build()
+        RHF[Ri]                          = do_RHF( mol )
+        UHF[Ri], UHF_S2[Ri], UHF_ss1[Ri] = do_UHF( mol )
+        for LAMi,LAM in enumerate( LAM_LIST ):
+            QEDRHF[LAMi,Ri] = do_QED_RHF( mol, LAM, WC, do_coherent_state=do_coherent_state )
+            QEDUHF[LAMi,Ri], QEDUHF_S2[LAMi,Ri], QEDUHF_ss1[LAMi,Ri] = do_QED_UHF( mol, LAM, WC, do_coherent_state=do_coherent_state )
+
+    do_plots( R_LIST, QEDRHF, QEDUHF, QEDUHF_S2, QEDUHF_ss1, RHF, UHF, UHF_S2, UHF_ss1, title="LiH_" )
+
 
 
 if ( __name__ == "__main__" ):
@@ -86,41 +169,11 @@ if ( __name__ == "__main__" ):
     mol.unit = 'Bohr'
     mol.symmetry = False
 
-    do_H2_Dissociation( mol )
+    #do_H2_Dissociation( mol )
+    do_LiH_Dissociation( mol )
 
 
 
 
 
 
-
-    exit()
-
-
-
-    dL           = 0.1
-    LAM_LIST     = [0.0]#np.arange(0.0, 1+dL, dL)
-    QEDHF_BRADEN = np.zeros_like(LAM_LIST)
-    QEDHF_ZHY    = np.zeros_like(LAM_LIST)
-    RHH          = 2.8
-    WC           = 0.1
-    #mol.atom     = 'H 0 0 0; H 0 0 %1.3f' % ( RHH )
-    mol.atom     = 'Li 0 0 %1.3f; H 0 0 %1.3f' % ( -3/4*RHH, 1/4*RHH )
-    #mol.atom     = 'Li 0 0 %1.3f; Li 0 0 %1.3f' % ( -2, 2 )
-    mol.build()
-
-    for LAMi,LAM in enumerate( LAM_LIST ):
-        print("Working on LAM = %1.2f" % LAM)
-        QEDHF_BRADEN[LAMi], QEDHF_ZHY[LAMi], e_rhf, e_uhf, e_fci = do_QED_RHF( mol, LAM, WC )
-    
-    plt.plot( LAM_LIST, LAM_LIST*0 + e_rhf, "-", c='black', lw=5, alpha=0.5, label="RHF (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
-    # plt.plot( LAM_LIST, LAM_LIST*0 + e_fci, "-", c='blue', lw=5, alpha=0.5, label="FCI (PySCF) + $\\frac{\\hbar \\omega}{2}$" )
-    plt.plot( LAM_LIST, QEDHF_BRADEN, "-", c='black', label="QED-UHF (Braden)" )
-    plt.plot( LAM_LIST, QEDHF_ZHY, "o", c='black', label="QED-RHF (Yu)" )
-    # plt.plot( LAM_LIST, QEDHF_BRADEN - QEDHF_ZHY, "-", c='black', label="QED-RHF Yu" )
-    plt.legend()
-    plt.xlabel("Coupling Strength, $\\lambda$ (a.u.)", fontsize=15)
-    plt.ylabel("Energy, $E_0$ (a.u.)", fontsize=15)
-    plt.tight_layout()
-    plt.savefig("H2_LAM_SCAN_QEDUHF.jpg", dpi=300)
-    plt.clf()

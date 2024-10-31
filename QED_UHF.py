@@ -6,6 +6,23 @@ from pyscf import gto, scf, fci
 
 from openms import mqed
 
+from DIIS import DIIS
+
+def get_spin_analysis( mo_a, mo_b, ao_overlap=None ):
+    from functools import reduce
+    nocc_a     = mo_a.shape[1] # Number of occupied alpha orbitals
+    nocc_b     = mo_b.shape[1] # Number of occupied beta orbitals
+    if ( ao_overlap is not None ):
+        mo_overlap = np.einsum("ai,ab,bj->ij", mo_a.conj(), ao_overlap, mo_b)
+    else:
+        mo_overlap = np.einsum("ai,aj->ij", mo_a.conj(), mo_b)
+    ssxy       = (nocc_a+nocc_b) / 2 - np.einsum('ij,ij->', mo_overlap.conj(), mo_overlap)
+    ssz        = (nocc_b-nocc_a)**2 / 4
+    ss         = (ssxy + ssz).real
+    s          = np.sqrt(ss+0.25) - 0.5
+    return ss, s*2+1
+
+
 def get_QED_HF_ZHY( mol, LAM, WC ):
     cavity_freq     = np.array([WC]) # a.u.
     cavity_coupling = np.array([LAM])
@@ -69,15 +86,15 @@ def make_RDM1_ao( C, n_elec_alpha ):
 def get_ao_integrals( mol ):
 
     # Get overlap matrix and orthogonalizing transformation matrix
-    overlap  = mol.intor('int1e_ovlp')
-    s,u      = eigh(overlap) 
+    S        = mol.intor('int1e_ovlp')
+    s,u      = eigh(S) 
     Shalf    = u @ np.diag(1/np.sqrt(s)) @ u.T
 
     # Get nuclear repulsion energy
     nuclear_repulsion_energy = mol.energy_nuc()
 
     # Get number of atomic orbitals
-    n_ao = overlap.shape[0]
+    n_ao = S.shape[0]
 
     # Get number of electrons
     n_elec_alpha, n_elec_beta = mol.nelec
@@ -97,20 +114,20 @@ def get_ao_integrals( mol ):
     # Construct core electronic Hamiltonian
     h1e = T_AO + V_en
 
-    return Shalf, h1e, eri, dip_ao, quad_ao, n_elec_alpha, n_elec_beta, n_ao, nuclear_repulsion_energy
+    return S, Shalf, h1e, eri, dip_ao, quad_ao, n_elec_alpha, n_elec_beta, n_ao, nuclear_repulsion_energy
 
 def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
 
-    Shalf, h1e, eri, dip_ao, quad_ao, n_elec_alpha, n_elec_beta, n_ao, nuclear_repulsion_energy = get_ao_integrals( mol )
+    S, Shalf, h1e, eri, dip_ao, quad_ao, n_elec_alpha, n_elec_beta, n_ao, nuclear_repulsion_energy = get_ao_integrals( mol )
 
     # Choose core as guess for Fock matrix
-    F = h1e
+    F_a = h1e
 
     # Rotate Fock matrix to orthogonal ao basis
-    F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
+    F_ORTHO_a = to_ortho_ao( Shalf, F_a, shape=2 )
 
     # Diagonalize Fock
-    eps_a, C_a = eigh( F_ORTHO )
+    eps_a, C_a = eigh( F_ORTHO_a )
 
     # Rotate all MOs back to non-orthogonal AO basis
     C_a = from_ortho_ao( Shalf, C_a, shape=1 )
@@ -122,13 +139,19 @@ def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 50
+    maxiter       = 200
+    doDAMP        = True
+    DAMP          = 0.5
 
     old_energy  = np.einsum("ab,ab->", D_a, h1e )
     old_energy += np.einsum("ab,ab->", D_b, h1e )
     old_energy += nuclear_repulsion_energy
     old_D_a = D_a.copy()
     old_D_b = D_b.copy()
+    old_F_a = F_a.copy()
+    old_F_b = F_a.copy()
+
+    myDIIS = DIIS( ao_overlap=S, unrestricted=True, N_DIIS=5 )
 
     #print("    Guess Energy: %20.12f" % old_energy)
     for iter in range( maxiter ):
@@ -160,6 +183,13 @@ def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
         F_a += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_a
         F_b  = h1e     + J_a + J_b - K_b
         F_b += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_b
+
+        if ( doDAMP == True ): # Do before DIIS, else DIIS will give singular B matrix
+            F_a = DAMP * F_a + (1-DAMP) * old_F_a
+            F_b = DAMP * F_b + (1-DAMP) * old_F_b
+
+        if ( iter > 2 ):
+            F_a, F_b = myDIIS.extrapolate(F_a, D_a, F_b=F_b, D_b=D_b)
 
         # Transfom Fock matrix to orthogonal basis
         F_ORTHO_a = to_ortho_ao( Shalf, F_a, shape=2 )
@@ -202,12 +232,22 @@ def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
         old_energy = energy
         old_D_a    = D_a.copy()
         old_D_b    = D_b.copy()
+        old_F_a    = F_a.copy()
+        old_F_b    = F_b.copy()
+
+        print("    Iteration %3d: Energy = %20.12f, dE = %1.5e, dD = %1.5e" % (iter, energy, dE, dD))
 
         if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break
-        if ( iter > maxiter ):
-            print("FAILURE: QED-HF (Braden) DID NOT CONVERGE")
+        if ( iter == maxiter-1 ):
+            print("FAILURE: QED-UHF (Braden) DID NOT CONVERGE")
             break
+
+    # Compute spin operators
+    S2, ss1 = get_spin_analysis( C_a[:,:n_elec_alpha], C_b[:,:n_elec_beta], ao_overlap=S )
+    print( "Spin Analsysis of UHF Wavefunction:" )
+    print( "\t<S2>                = %1.4f" % (S2) )
+    print( "\tMultiplicity s(s+1) = %1.4f" % (ss1) )
 
     # myRHF   = scf.RHF( mol )
     # e_qedhf = float('NaN') # get_QED_HF_ZHY( mol, LAM, WC )
@@ -230,11 +270,18 @@ def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
     # e_fci   = fci.FCI( myRHF ).kernel()[0] + 0.5 * WC
     #print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
     #print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
-    print('    * QED-UHF Total Energy (Braden): %20.12f' % (energy))
+    print('\tQED-UHF Total Energy: %1.8f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
 
-    return energy #, e_qedhf, e_rhf, e_uhf, e_fci
+    return energy, S2, ss1 #, e_qedhf, e_rhf, e_uhf, e_fci
 
 
 if (__name__ == '__main__' ):
-    pass
+
+    mol = gto.Mole()
+    mol.basis = "ccpvdz"
+    mol.unit = 'Bohr'
+    mol.symmetry = False
+    mol.atom = 'Li 0 0 0; H 0 0 8.0'
+    mol.build()
+    E_UHF, S2, ss1 = do_QED_UHF( mol, 0.2, 0.1 )

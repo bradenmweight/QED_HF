@@ -3,7 +3,21 @@ import matplotlib.pyplot as plt
 
 from pyscf import gto, scf, fci
 
+from DIIS import DIIS
 
+def get_spin_analysis( mo_a, mo_b, ao_overlap=None ):
+    from functools import reduce
+    nocc_a     = mo_a.shape[1] # Number of occupied alpha orbitals
+    nocc_b     = mo_b.shape[1] # Number of occupied beta orbitals
+    if ( ao_overlap is not None ):
+        mo_overlap = np.einsum("ai,ab,bj->ij", mo_a.conj(), ao_overlap, mo_b)
+    else:
+        mo_overlap = np.einsum("ai,aj->ij", mo_a.conj(), mo_b)
+    ssxy       = (nocc_a+nocc_b) / 2 - np.einsum('ij,ij->', mo_overlap.conj(), mo_overlap)
+    ssz        = (nocc_b-nocc_a)**2 / 4
+    ss         = (ssxy + ssz).real
+    s          = np.sqrt(ss+0.25) - 0.5
+    return ss, s*2+1
 
 
 def do_UHF( mol ):
@@ -53,12 +67,14 @@ def do_UHF( mol ):
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 50
+    maxiter       = 200
 
     old_energy  = np.einsum("ab,ab->", D_a, 2*h1e )
     old_energy += nuclear_repulsion_energy
     old_D_a     = D_a.copy()
     old_D_b     = D_b.copy()
+
+    myDIIS = DIIS( unrestricted=True, ao_overlap=S, N_DIIS=10 )
 
     for iter in range( maxiter ):
 
@@ -74,6 +90,9 @@ def do_UHF( mol ):
         F_a = h1e + J_a + J_b - K_a
         F_b = h1e + J_b + J_a - K_b
 
+        if ( iter > 2 ):
+            F_a, F_b = myDIIS.extrapolate( F_a, D_a, F_b=F_b, D_b=D_b )
+
         # Transfom Fock matrix to orthogonal basis
         F_ORTHO_a = Shalf.T @ F_a @ Shalf
         F_ORTHO_b = Shalf.T @ F_b @ Shalf
@@ -85,7 +104,7 @@ def do_UHF( mol ):
         if ( iter == 5 ):
             # Break symmetry by mixing a-HOMO and a-LUMO
             C_b    = C_a.copy()
-            angle   = np.pi/5
+            angle  = np.pi/5
             HOMO_a = C_a[:,n_elec_alpha-1]
             LUMO_a = C_a[:,n_elec_alpha+0]
             C_a[:,n_elec_alpha-1] = HOMO_a * np.cos(angle) + LUMO_a * np.sin(angle)
@@ -116,12 +135,17 @@ def do_UHF( mol ):
         old_D_b      = D_b.copy()
 
         if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
-            #print('    SCF iterations converged!')
             break
         else :
-            if ( iter > maxiter ):
+            if ( iter == maxiter-1 ):
                 #print('    SCF iterations did not converge...')
                 break
+
+    # Compute spin operators
+    S2, ss1 = get_spin_analysis( C_a[:,:n_elec_alpha], C_b[:,:n_elec_beta], ao_overlap=S )
+    print( "Spin Analsysis of UHF Wavefunction:" )
+    print( "\t<S2>                = %1.4f" % (S2) )
+    print( "\tMultiplicity s(s+1) = %1.4f" % (ss1) )
 
     # # RHF
     # myRHF = scf.RHF( mol )
@@ -146,10 +170,19 @@ def do_UHF( mol ):
     # e_fci = fci.FCI( myRHF ).kernel()[0]
     # print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
     # print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
-    print('    *     UHF Total Energy (Braden): %20.12f' % (energy))
+    print('\tUHF Total Energy:    %1.8f' % (energy))
     # print('    * RHF Wavefunction:', np.round( C_a[:,0],3))
     # print('    * RHF Wavefunction:', np.round( C_b[:,0],3))
-    return energy #, e_rhf, e_uhf, e_fci
+    
+    
+    return energy, S2, ss1 #, e_rhf, e_uhf, e_fci
 
 if (__name__ == '__main__' ):
-    pass
+
+    mol = gto.Mole()
+    mol.basis = "ccpvdz"
+    mol.unit = 'Bohr'
+    mol.symmetry = False
+    mol.atom = 'H 0 0 0; H 0 0 6'
+    mol.build()
+    E_UHF, S2, ss1 = do_UHF( mol )

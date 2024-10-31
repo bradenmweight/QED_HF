@@ -67,7 +67,7 @@ def do_RHF( mol ):
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 50
+    maxiter       = 200
 
     old_energy = 0.5 * np.einsum("ab,ab->", D, h1e + F ) + nuclear_repulsion_energy
     old_D = D.copy()
@@ -98,7 +98,7 @@ def do_RHF( mol ):
         D  = np.einsum("ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha])
 
         # Get current energy for RHF
-        energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K ) 
+        energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K )
         energy += nuclear_repulsion_energy
 
         dE = np.abs( energy - old_energy )
@@ -113,7 +113,7 @@ def do_RHF( mol ):
             #print('    SCF iterations converged!')
             break
         else :
-            if ( iter > maxiter ):
+            if ( iter == maxiter-1 ):
                 print('    SCF iterations did not converge...')
                 return float("nan")
 
@@ -128,4 +128,11 @@ def do_RHF( mol ):
     return energy#, e_rhf, e_fci
 
 if (__name__ == '__main__' ):
-    pass
+
+    mol = gto.Mole()
+    mol.basis = "ccpvdz"
+    mol.unit = 'Bohr'
+    mol.symmetry = False
+    mol.atom = 'H 0 0 0; H 0 0 10.0'
+    mol.build()
+    E_RHF = do_RHF( mol )
