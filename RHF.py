@@ -3,64 +3,26 @@ import matplotlib.pyplot as plt
 
 from pyscf import gto, scf, fci
 
-
+from tools import to_ortho_ao, from_ortho_ao, eigh, make_RDM1_ao, do_DAMP
+from ao_ints import get_ao_integrals, get_dipole_quadrupole
+from DIIS import DIIS
 
 def do_RHF( mol ):
 
-    # Get overlap matrix and orthogonalizing transformation matrix
-    overlap  = mol.intor('int1e_ovlp')
-    s,u      = np.linalg.eigh(overlap) 
-    Shalf    = u @ np.diag(1/np.sqrt(s)) @ u.T
-
-    # Get nuclear repulsion energy
-    nuclear_repulsion_energy = mol.energy_nuc()
-
-    # Get number of atomic orbitals
-    n_ao = overlap.shape[0]
-
-    # Get number of electrons
-    n_elec_alpha, n_elec_beta = mol.nelec
-
-    # Get kinetic energy matrix
-    T_AO = mol.intor('int1e_kin')
-
-    # Get electron-nuclear matrix
-    V_en = mol.intor('int1e_nuc')
-
-    # Get electron-electron repulsion matrix
-    eri = mol.intor('int2e', aosym='s1' ) # Symmetry is turned off to get all possible integrals, (NAO,NAO,NAO,NAO)
-
-    # # Get dipole matrix elements in AO basis with nuclear contribution
-    # charges    = mol.atom_charges()
-    # coords     = mol.atom_coords()
-    # nuc_dipole = np.einsum("a,ad->d", charges, coords) #/ charges.sum()
-    # dipole_ao  = mol.intor_symmetric("int1e_r", comp=3)
-    # dipole_ao  = np.array([-1*dipole_ao[d,:,:] + nuc_dipole[d]*np.eye(n_ao) for d in range(3)])
-
-    # # Get quadrupole matrix elements in AO basis
-    # quadrupole_ao  = mol.intor_symmetric("int1e_rr", comp=9).reshape(3,3,n_ao,n_ao)
-    # nuc_quadrupole = np.einsum("a,ax,by,b->xy", charges, coords, coords, charges) #/ charges.sum()
-    # quadrupole_ao  = np.array([-1*quadrupole_ao[x,y,:,:] + nuc_quadrupole[x,y]*np.eye(n_ao) for x in range(3) for y in range(3)])
-    # quadrupole_ao  = quadrupole_ao.reshape(3,3,n_ao,n_ao)
-
-
-
-
-
-    # Get core Hamiltonian
-    h1e = T_AO + V_en
+    # Get ao integrals
+    S, Shalf, h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
 
     # Choose core as guess for Fock
     F = h1e
 
     # Rotate Fock to orthogonal basis
-    F_ORTHO = Shalf.T @ F @ Shalf
+    F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
 
     # Diagonalize Fock
     eps, C = np.linalg.eigh( F_ORTHO )
 
     # Rotate all MOs back to non-orthogonal AO basis
-    C = Shalf @ C
+    C = from_ortho_ao( Shalf, C, shape=1 )
 
     # Get density matrix in AO basis
     D    = np.einsum( "ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha] )
@@ -71,6 +33,9 @@ def do_RHF( mol ):
 
     old_energy = 0.5 * np.einsum("ab,ab->", D, h1e + F ) + nuclear_repulsion_energy
     old_D = D.copy()
+    old_F = F.copy()
+
+    myDIIS = DIIS( unrestricted=False, ao_overlap=S )
 
     #print("    Guess Energy: %20.12f" % old_energy)
     for iter in range( maxiter ):
@@ -80,19 +45,24 @@ def do_RHF( mol ):
 
         # Exchange matrix
         K = np.einsum( 'rs,psrq->pq', D, eri )
-        #K = np.einsum( 'rs,prqs->pq', D, eri )
 
         # Fock matrix for RHF
         F = h1e + 2 * J - K
 
+        if ( iter < 5 ):
+            F = do_DAMP( F, old_F )
+        
+        if ( iter > 5 ):
+            myDIIS.extrapolate( F, D )
+
         # Transfom Fock matrix to orthogonal basis
-        F_ORTHO = Shalf.T @ F @ Shalf
+        F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
 
         # Diagonalize Fock matrix
         eps, C = np.linalg.eigh( F_ORTHO )
 
         # Rotate MOs back to non-orthogonal AO basis
-        C = Shalf @ C
+        C = from_ortho_ao( Shalf, C, shape=1 )
 
         # Get density matrix in AO basis
         D  = np.einsum("ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha])
@@ -109,13 +79,11 @@ def do_RHF( mol ):
         old_energy = energy
         old_D      = D.copy()
 
-        if ( iter > 2 and dE < e_convergence and dD < d_convergence ):
-            #print('    SCF iterations converged!')
+        if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break
-        else :
-            if ( iter == maxiter-1 ):
-                print('    SCF iterations did not converge...')
-                return float("nan")
+        if ( iter == maxiter-1 ):
+            print("FAILURE: QED-UHF DID NOT CONVERGE")
+            break
 
     #myRHF = scf.RHF( mol )
     #e_rhf = myRHF.kernel()

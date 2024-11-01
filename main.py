@@ -18,8 +18,8 @@ def get_Globals():
 
     global LAM_LIST, WC
     WC           = 0.1 # a.u.
-    dL           = 0.025 # 0.01 # a.u.
-    LAM_LIST     = np.array([0.0]) # np.arange(0.0, 0.1+dL, dL)
+    dL           = 0.1 # 0.01 # a.u.
+    LAM_LIST     = np.array([0.0]) # np.arange(0.0, 0.2+dL, dL)
 
     global DATA_DIR
     DATA_DIR = "PLOTS_DATA"
@@ -69,7 +69,6 @@ def do_plots( R_LIST, QEDRHF, QEDUHF, QEDUHF_S2, QEDUHF_ss1, RHF, UHF, UHF_S2, U
             if ( QEDRHF[LAMi,Ri] - QEDUHF[LAMi,Ri] > 1e-6 ):        
                 CF_POINTS[LAMi] = R
                 break
-
     plt.plot( LAM_LIST, CF_POINTS, "o-" )
     plt.xlabel("Coupling Strength, $\\lambda$ (a.u.)", fontsize=15)
     plt.ylabel("Coulson-Fischer Points, $R_\\mathrm{CF}$ (a.u.)", fontsize=15)
@@ -77,6 +76,21 @@ def do_plots( R_LIST, QEDRHF, QEDUHF, QEDUHF_S2, QEDUHF_ss1, RHF, UHF, UHF_S2, U
     plt.savefig(f"{DATA_DIR}/{title}_PES_CFPs.jpg", dpi=300)
     plt.clf()
     np.savetxt(f"{DATA_DIR}/{title}_PES_CFPs.dat", np.c_[LAM_LIST, CF_POINTS], fmt="%1.8f", header="LAM_LIST (a.u.), CF_POINTS (Bohr)")
+
+    CF_POINTS = np.zeros( len(LAM_LIST) )
+    for LAMi,LAM in enumerate( LAM_LIST ):
+        for Ri,R in enumerate( R_LIST ):
+            if ( QEDUHF_S2[LAMi,Ri] > 0.5 ):
+                CF_POINTS[LAMi] = R
+                break
+    plt.plot( LAM_LIST, CF_POINTS, "o-" )
+    plt.xlabel("Coupling Strength, $\\lambda$ (a.u.)", fontsize=15)
+    plt.ylabel("Coulson-Fischer Points, $R_\\mathrm{CF}$ (a.u.)", fontsize=15)
+    plt.tight_layout()
+    plt.savefig(f"{DATA_DIR}/{title}_PES_CFPs_fromS2.jpg", dpi=300)
+    plt.clf()
+    np.savetxt(f"{DATA_DIR}/{title}_PES_CFPs_fromS2.dat", np.c_[LAM_LIST, CF_POINTS], fmt="%1.8f", header="LAM_LIST (a.u.), CF_POINTS (Bohr)")
+
 
 
     for LAMi,LAM in enumerate( LAM_LIST ):

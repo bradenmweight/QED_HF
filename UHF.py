@@ -3,67 +3,31 @@ import matplotlib.pyplot as plt
 
 from pyscf import gto, scf, fci
 
+from tools import to_ortho_ao, from_ortho_ao, eigh, make_RDM1_ao, get_spin_analysis, do_DAMP
+from ao_ints import get_ao_integrals, get_dipole_quadrupole
 from DIIS import DIIS
-
-def get_spin_analysis( mo_a, mo_b, ao_overlap=None ):
-    from functools import reduce
-    nocc_a     = mo_a.shape[1] # Number of occupied alpha orbitals
-    nocc_b     = mo_b.shape[1] # Number of occupied beta orbitals
-    if ( ao_overlap is not None ):
-        mo_overlap = np.einsum("ai,ab,bj->ij", mo_a.conj(), ao_overlap, mo_b)
-    else:
-        mo_overlap = np.einsum("ai,aj->ij", mo_a.conj(), mo_b)
-    ssxy       = (nocc_a+nocc_b) / 2 - np.einsum('ij,ij->', mo_overlap.conj(), mo_overlap)
-    ssz        = (nocc_b-nocc_a)**2 / 4
-    ss         = (ssxy + ssz).real
-    s          = np.sqrt(ss+0.25) - 0.5
-    return ss, s*2+1
-
 
 def do_UHF( mol ):
 
-    # Get overlap matrix and orthogonalizing transformation matrix
-    S        = mol.intor('int1e_ovlp')
-    s,u      = np.linalg.eigh(S) 
-    Shalf    = u @ np.diag(1/np.sqrt(s)) @ u.T
-
-    # Get nuclear repulsion energy
-    nuclear_repulsion_energy = mol.energy_nuc()
-
-    # Get number of atomic orbitals
-    n_ao = S.shape[0]
-
-    # Get number of electrons
-    n_elec_alpha, n_elec_beta = mol.nelec
-
-    # Get kinetic energy matrix
-    T_AO = mol.intor('int1e_kin')
-
-    # Get electron-nuclear matrix
-    V_en = mol.intor('int1e_nuc')
-
-    # Get electron-electron repulsion matrix
-    eri = mol.intor('int2e', aosym='s1' ) # Symmetry is turned off to get all possible integrals, (NAO,NAO,NAO,NAO)
-
-    # Get core Hamiltonian
-    h1e = T_AO + V_en
+    # Get ao integrals
+    S, Shalf, h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
 
     # Choose core as guess for Fock
-    F = h1e
+    F_a = h1e
 
     # Rotate Fock to orthogonal basis
-    F_ORTHO = Shalf.T @ F @ Shalf
+    F_ORTHO_a = to_ortho_ao( Shalf, F_a, shape=2 )
 
     # Diagonalize Fock
-    eps, C_a = np.linalg.eigh( F_ORTHO )
+    eps_a, C_a = np.linalg.eigh( F_ORTHO_a )
     
     # Rotate all MOs back to non-orthogonal AO basis
-    C_a = Shalf @ C_a
+    C_a = from_ortho_ao( Shalf, C_a, shape=1 )
     C_b = C_a.copy()
 
-    # Get density matrix in AO basis
-    D_a      = np.einsum( "ai,bi->ab", C_a[:,:n_elec_alpha], C_a[:,:n_elec_alpha] )
-    D_b      = np.einsum( "ai,bi->ab", C_b[:,:n_elec_beta], C_b[:,:n_elec_beta] )
+    # Get density matrix in AO basis C, n_elec_alpha
+    D_a      = make_RDM1_ao(C_a, n_elec_alpha)
+    D_b      = make_RDM1_ao(C_b, n_elec_beta )
 
     e_convergence = 1e-8
     d_convergence = 1e-6
@@ -73,8 +37,10 @@ def do_UHF( mol ):
     old_energy += nuclear_repulsion_energy
     old_D_a     = D_a.copy()
     old_D_b     = D_b.copy()
+    old_F_a     = F_a.copy()
+    old_F_b     = F_a.copy()
 
-    myDIIS = DIIS( unrestricted=True, ao_overlap=S, N_DIIS=10 )
+    myDIIS = DIIS( unrestricted=True, ao_overlap=S )
 
     for iter in range( maxiter ):
 
@@ -90,7 +56,11 @@ def do_UHF( mol ):
         F_a = h1e + J_a + J_b - K_a
         F_b = h1e + J_b + J_a - K_b
 
-        if ( iter > 2 ):
+        if ( iter < 5 ):
+            F = do_DAMP( F_a, old_F_a )
+            F = do_DAMP( F_b, old_F_b )
+
+        if ( iter > 2 and iter < 10 ):
             F_a, F_b = myDIIS.extrapolate( F_a, D_a, F_b=F_b, D_b=D_b )
 
         # Transfom Fock matrix to orthogonal basis
@@ -127,7 +97,8 @@ def do_UHF( mol ):
         dE = energy - old_energy
         dD = np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b )
 
-        #print ("    Iteration %d  Energy = %1.6f  dE = %1.6f" % (iter, energy, dE))
+        if ( iter > 50 ):
+            print ("    Iteration %d  Energy = %1.6f  dE = %1.6f" % (iter, energy, dE))
 
 
         old_energy   = energy
@@ -136,10 +107,9 @@ def do_UHF( mol ):
 
         if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break
-        else :
-            if ( iter == maxiter-1 ):
-                #print('    SCF iterations did not converge...')
-                break
+        if ( iter == maxiter-1 ):
+            print("FAILURE: QED-UHF DID NOT CONVERGE")
+            break
 
     # Compute spin operators
     S2, ss1 = get_spin_analysis( C_a[:,:n_elec_alpha], C_b[:,:n_elec_beta], ao_overlap=S )

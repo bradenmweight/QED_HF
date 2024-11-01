@@ -1,7 +1,7 @@
 import numpy as np
 
 class DIIS():
-    def __init__( self, ao_overlap=None, unrestricted=False, N_DIIS=100 ):
+    def __init__( self, ao_overlap=None, unrestricted=False, N_DIIS=8 ):
         if ( unrestricted == True ):
             self.fock_list_a = []
             self.fock_list_b = []
@@ -49,7 +49,11 @@ class DIIS():
         B[-1, :-1] = B[:-1, -1] = 1
         e          = np.array(error_list)
         B[:-1,:-1] = np.einsum("ixy,jxy->ij", e, e)
-        coeff      = np.linalg.solve(B, rhs)[:-1]
+        try:
+            coeff      = np.linalg.solve(B, rhs)[:-1]
+        except np.linalg.LinAlgError:
+            print("   Warning! DIIS extrapolation failed. Setting Fock matrix and other variables to most recent.")
+            return fock_list[-1], [fock_list[-1]], [error_list[-1]] # Reset variables
         error_new  = np.einsum( "i,iab->ab", coeff, e )
         fock_new   = np.einsum( "i,iab->ab", coeff, fock_list )
         return fock_new, fock_list, error_list
@@ -58,7 +62,7 @@ class DIIS():
 
         if ( F_b is None ):
             error_a = self.__get_error_vector(F_a, D_a)
-            F_a, self.fock_list, self.error_list = self.__extrapolate(F_a, error_a)
+            F_a, self.fock_list, self.error_list = self.__extrapolate(F_a, error_a, self.fock_list, self.error_list)
             return F_a
         else:
             error_a = self.__get_error_vector(F_a, D_a)
