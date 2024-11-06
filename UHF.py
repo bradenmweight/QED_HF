@@ -98,7 +98,7 @@ def do_UHF( mol ):
         dD = np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b )
 
         if ( iter > 50 ):
-            print ("    Iteration %d  Energy = %1.6f  dE = %1.6f" % (iter, energy, dE))
+            print("    UHF Iteration %3d: Energy = %1.12f, dE = %1.12f, dD = %1.12f" % (iter, energy, dE, dD))
 
 
         old_energy   = energy

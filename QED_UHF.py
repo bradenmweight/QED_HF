@@ -4,36 +4,67 @@ from numba import njit
 
 from pyscf import gto, scf, fci
 
-from tools import to_ortho_ao, from_ortho_ao, eigh, make_RDM1_ao, get_spin_analysis, do_DAMP, do_Max_Overlap_Method
+from tools import get_JK, to_ortho_ao, from_ortho_ao, eigh, make_RDM1_ao, get_spin_analysis, do_DAMP, do_Max_Overlap_Method
 from ao_ints import get_ao_integrals, get_dipole_quadrupole
 from DIIS import DIIS
 
+def build_Fock_matrix( h1e, eri, D_a, D_b, dip_ao, quad_ao, do_CS=True, LAM=0.0 ):
 
-def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
+
+    return F_a, F_b, h1e_DSE, J_a, J_b, DSE_J_a, DSE_J_b, K_a, K_b, DSE_K_a, DSE_K_b
+
+def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None ):
 
     S, Shalf, h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
     dip_ao, quad_ao = get_dipole_quadrupole( mol, Shalf.shape[0] )
 
-    # Choose core as guess for Fock matrix
-    F_a = h1e
+    if ( initial_guess is None ):
+        # Choose core as guess for Fock matrix
+        F_a = h1e
+        F_ORTHO_a  = to_ortho_ao( Shalf, F_a, shape=2 )
+        eps_a, C_a = eigh( F_ORTHO_a )
+        C_a        = from_ortho_ao( Shalf, C_a, shape=1 )
+        C_b        = C_a.copy()
+        D_a        = make_RDM1_ao( C_a, n_elec_alpha )
+        D_b        = make_RDM1_ao( C_b, n_elec_beta )
+    else:
+        # Use initial guess to construct the Fock matrix
+        C_a, C_b   = initial_guess
+        D_a        = make_RDM1_ao( C_a, n_elec_alpha )
+        D_b        = make_RDM1_ao( C_b, n_elec_beta )
+        if ( do_CS == True ):
+            AVEdipole = np.einsum( 'pq,pq->', D_a + D_b, dip_ao[-1,:,:] )
+        else:
+            AVEdipole = 0.0
+        
+        DSE_FACTOR = 0.5 * LAM**2
+        h1e_DSE =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[-1,:,:] + quad_ao[-1,-1,:,:] ) 
+        eri_DSE = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao[-1,:,:], dip_ao[-1,:,:] )
 
-    # Rotate Fock matrix to orthogonal ao basis
-    F_ORTHO_a = to_ortho_ao( Shalf, F_a, shape=2 )
+        # Coulomb and Exchange Matrices
+        J_a, K_a         = get_JK( D_a, eri )
+        J_b, K_b         = get_JK( D_b, eri )
+        DSE_J_a, DSE_K_a = get_JK( D_a, eri_DSE )
+        DSE_J_b, DSE_K_b = get_JK( D_b, eri_DSE )
 
-    # Diagonalize Fock
-    eps_a, C_a = eigh( F_ORTHO_a )
+        # Fock matrix
+        F_a  = h1e     + J_a + J_b - K_a
+        F_a += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_a
+        F_b  = h1e     + J_a + J_b - K_b
+        F_b += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_b
 
-    # Rotate all MOs back to non-orthogonal AO basis
-    C_a = from_ortho_ao( Shalf, C_a, shape=1 )
-    C_b = C_a.copy()
-
-    # Get density matrix in AO basis
-    D_a = make_RDM1_ao( C_a, n_elec_alpha )
-    D_b = make_RDM1_ao( C_b, n_elec_beta )
+        F_ORTHO_a  = to_ortho_ao( Shalf, F_a, shape=2 )
+        F_ORTHO_b  = to_ortho_ao( Shalf, F_b, shape=2 )
+        eps_a, C_a = eigh( F_ORTHO_a )
+        eps_b, C_b = eigh( F_ORTHO_b )
+        C_a        = from_ortho_ao( Shalf, C_a, shape=1 )
+        C_b        = from_ortho_ao( Shalf, C_b, shape=1 )
+        D_a        = make_RDM1_ao( C_a, n_elec_alpha )
+        D_b        = make_RDM1_ao( C_b, n_elec_beta )
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 300
+    maxiter       = 500
 
     old_energy  = np.einsum("ab,ab->", D_a, h1e )
     old_energy += np.einsum("ab,ab->", D_b, h1e )
@@ -54,40 +85,33 @@ def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
     #print("    Guess Energy: %20.12f" % old_energy)
     for iter in range( maxiter ):
 
-        # DSE
-        if ( do_coherent_state == True ):
+        if ( do_CS == True ):
             AVEdipole = np.einsum( 'pq,pq->', D_a + D_b, dip_ao[-1,:,:] )
         else:
             AVEdipole = 0.0
         
         DSE_FACTOR = 0.5 * LAM**2
-        h1e_DSE =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[-1,:,:] + quad_ao[-1,-1,:,:] ) 
-        eri_DSE = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao[-1,:,:], dip_ao[-1,:,:] )
+        h1e_DSE    =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[-1,:,:] + quad_ao[-1,-1,:,:] ) 
+        eri_DSE    = 2 * DSE_FACTOR * np.einsum( 'pq,rs->pqrs', dip_ao[-1,:,:], dip_ao[-1,:,:] )
 
-        # Coulomb matrix
-        J_a     = np.einsum( 'rs,pqrs->pq', D_a, eri )
-        J_b     = np.einsum( 'rs,pqrs->pq', D_b, eri )
-        DSE_J_a = np.einsum( 'rs,pqrs->pq', D_a, eri_DSE )
-        DSE_J_b = np.einsum( 'rs,pqrs->pq', D_b, eri_DSE )
-
-        # Exchange matrix
-        K_a     = np.einsum( 'rs,prsq->pq', D_a, eri )
-        K_b     = np.einsum( 'rs,prsq->pq', D_b, eri )
-        DSE_K_a = np.einsum( 'rs,prsq->pq', D_a, eri_DSE )
-        DSE_K_b = np.einsum( 'rs,prsq->pq', D_b, eri_DSE )
+        # Coulomb and Exchange Matrices
+        J_a, K_a         = get_JK( D_a, eri )
+        J_b, K_b         = get_JK( D_b, eri )
+        DSE_J_a, DSE_K_a = get_JK( D_a, eri_DSE )
+        DSE_J_b, DSE_K_b = get_JK( D_b, eri_DSE )
 
         # Fock matrix
         F_a  = h1e     + J_a + J_b - K_a
-        F_a += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_a
         F_b  = h1e     + J_a + J_b - K_b
+        F_a += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_a
         F_b += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_b
-
+        
         if ( iter < 5 ): # Do before DIIS
             F_a = do_DAMP( F_a, old_F_a )
             F_b = do_DAMP( F_b, old_F_b )
 
         if ( DIIS_flag == True ):
-            F_a, F_b = myDIIS.extrapolate(F_a, D_a, F_b=F_b, D_b=D_b)
+           F_a, F_b = myDIIS.extrapolate(F_a, D_a, F_b=F_b, D_b=D_b)
 
         # Transfom Fock matrix to orthogonal basis
         F_ORTHO_a = to_ortho_ao( Shalf, F_a, shape=2 )
@@ -125,7 +149,7 @@ def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
         energy  = np.einsum("ab,ab->", D_a, h1e + 0.5*(J_a + J_b - K_a) )
         energy += np.einsum("ab,ab->", D_b, h1e + 0.5*(J_b + J_a - K_b) )
         energy += np.einsum("ab,ab->", D_a, h1e_DSE + 0.5*(DSE_J_a + DSE_J_b - DSE_K_a) )
-        energy += np.einsum("ab,ab->", D_b, h1e_DSE + 0.5*(DSE_J_a + DSE_J_b - DSE_K_b) )
+        energy += np.einsum("ab,ab->", D_b, h1e_DSE + 0.5*(DSE_J_b + DSE_J_a - DSE_K_b) )
         energy += nuclear_repulsion_energy
         energy += DSE_FACTOR*AVEdipole**2
         energy += 0.5 * WC
@@ -142,17 +166,17 @@ def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
         old_dD     = dD*1
 
         if ( iter > 50 ):
-            print("    Iteration %3d: Energy = %1.12f, dE = %1.12f, dD = %1.12f" % (iter, energy, dE, dD))
+            print("    QED-UHF Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 
         if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break
         if ( iter == maxiter-1 ):
             print("FAILURE: QED-UHF DID NOT CONVERGE")
-            break
+            return float('nan')
         
         if ( iter > 100 ): # Try doing DIIS
             DIIS_flag = True
-        if ( iter > 200 ): # Try doing MOM
+        if ( iter > 150 ): # Try doing MOM
             MOM_flag = True
             DIIS_flag = False
 
@@ -186,7 +210,11 @@ def do_QED_UHF( mol, LAM, WC, do_coherent_state=True ):
     print('\tQED-UHF Total Energy: %1.8f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
 
-    return energy, S2, ss1 #, e_qedhf, e_rhf, e_uhf, e_fci
+
+    if ( return_wfn == True ):
+        return energy, S2, ss1, np.array([C_a, C_b])
+    else:
+        return energy, S2, ss1
 
 
 if (__name__ == '__main__' ):

@@ -14,9 +14,6 @@ class DIIS():
         self.N_DIIS = N_DIIS
         if ( ao_overlap is not None ):
             self.ao_overlap = ao_overlap
-        else:
-            print("\n!!!! Error: Must provide DIIS class with ao_overlap matrix.\n")
-            exit()
 
     def __prune_lists(self, fock_list, error_list):
         if ( len(fock_list) > self.N_DIIS ): # Remove if too long ago
@@ -27,8 +24,11 @@ class DIIS():
         return fock_list, error_list
 
     def __get_error_vector(self, F, D):
-        SDF = self.ao_overlap @ D @ F
-        return SDF.conj().T - SDF
+        if ( self.ao_overlap is not None ):
+            GRAD = self.ao_overlap @ D @ F
+        else:
+            GRAD = D @ F
+        return GRAD.conj().T - GRAD
 
     def __extrapolate(self, F, error, fock_list, error_list):
 
@@ -53,7 +53,8 @@ class DIIS():
             coeff      = np.linalg.solve(B, rhs)[:-1]
         except np.linalg.LinAlgError:
             print("   Warning! DIIS extrapolation failed. Setting Fock matrix and other variables to most recent.")
-            return fock_list[-1], [fock_list[-1]], [error_list[-1]] # Reset variables
+            #return fock_list[-1], [fock_list[-1]], [error_list[-1]] # Reset variables
+            return fock_list[-1], None, None # Reset variables
         error_new  = np.einsum( "i,iab->ab", coeff, e )
         fock_new   = np.einsum( "i,iab->ab", coeff, fock_list )
         return fock_new, fock_list, error_list
@@ -61,10 +62,14 @@ class DIIS():
     def extrapolate(self, F_a, D_a, F_b=None, D_b=None):
 
         if ( F_b is None ):
+            if ( self.fock_list is None or self.error_list is None ):
+                return F_a
             error_a = self.__get_error_vector(F_a, D_a)
             F_a, self.fock_list, self.error_list = self.__extrapolate(F_a, error_a, self.fock_list, self.error_list)
             return F_a
         else:
+            if ( self.fock_list_a is None or self.fock_list_b is None ):
+                return F_a, F_b
             error_a = self.__get_error_vector(F_a, D_a)
             error_b = self.__get_error_vector(F_b, D_b)
             F_a, self.fock_list_a, self.error_list_a = self.__extrapolate(F_a, error_a, self.fock_list_a, self.error_list_a)

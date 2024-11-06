@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 
 from pyscf import gto, scf, fci
 
-from tools import to_ortho_ao, from_ortho_ao, eigh, make_RDM1_ao, do_DAMP
+from tools import make_RDM1_ao, do_DAMP, to_ortho_ao, from_ortho_ao, eigh
 from ao_ints import get_ao_integrals, get_dipole_quadrupole
 from DIIS import DIIS
 
@@ -83,7 +83,7 @@ def do_RHF( mol ):
             break
         if ( iter == maxiter-1 ):
             print("FAILURE: QED-UHF DID NOT CONVERGE")
-            break
+            return float('nan')
 
     #myRHF = scf.RHF( mol )
     #e_rhf = myRHF.kernel()
@@ -101,6 +101,6 @@ if (__name__ == '__main__' ):
     mol.basis = "ccpvdz"
     mol.unit = 'Bohr'
     mol.symmetry = False
-    mol.atom = 'H 0 0 0; H 0 0 10.0'
+    mol.atom = 'H 0 0 0; H 0 0 2.0'
     mol.build()
     E_RHF = do_RHF( mol )

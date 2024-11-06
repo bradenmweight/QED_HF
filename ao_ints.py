@@ -1,5 +1,6 @@
 import numpy as np
 from tools import eigh
+import psutil
 
 def get_dipole_quadrupole( mol, n_ao ):
     # Get dipole matrix elements in AO basis with nuclear contribution
@@ -28,6 +29,15 @@ def get_ao_integrals( mol ):
 
     # Get number of atomic orbitals
     n_ao = S.shape[0]
+
+    eri_memory_size = 3 * n_ao**4 * 16 / 10**(9) # GB # Factor 3 for QED-versions
+    avail_memory = psutil.virtual_memory().available / (1024 ** 3)
+    if ( eri_memory_size > 2 ): 
+        print("\tERI memory size: %1.6f GB of %1.3f GB available > 2.0" % (eri_memory_size, avail_memory) )
+        print("\tExitting.")
+        exit()
+    elif ( eri_memory_size > 1 ):
+        print("\tERI memory size ~ %1.3f GB of %1.3f GB available" % (eri_memory_size, avail_memory) )
 
     # Get number of electrons
     n_elec_alpha, n_elec_beta = mol.nelec

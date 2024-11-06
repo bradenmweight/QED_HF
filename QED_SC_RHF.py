@@ -8,39 +8,38 @@ from tools import to_ortho_ao, from_ortho_ao, eigh, make_RDM1_ao, do_DAMP
 from ao_ints import get_ao_integrals, get_dipole_quadrupole
 from DIIS import DIIS
 
-
-def do_QED_HF_ZHY( mol, LAM, WC ):
-    from openms import mqed
-    cavity_freq     = np.array([WC]) # a.u.
-    cavity_coupling = np.array([LAM])
-    cavity_vec      = np.array([np.array([0,0,1])])
-    cavity_mode     = np.einsum("m,md->md", cavity_coupling, cavity_vec ) / np.linalg.norm(cavity_vec,axis=-1)
-
-    qedmf = mqed.HF(mol, xc=None, cavity_mode=cavity_mode, cavity_freq=cavity_freq)
-    qedmf.max_cycle = 500
-    qedmf.kernel()
-    if ( qedmf.conv_check == False ):
-        print("   Warning! QED-HF did not converge. Setting energy to NaN.")
-        return float('nan')
-    else:
-        return qedmf.e_tot
-
-def do_QED_RHF( mol, LAM, WC, do_CS=True ):
+def do_QED_SC_RHF( mol, LAM, WC ):
 
     S, Shalf, h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
     dip_ao, quad_ao = get_dipole_quadrupole( mol, Shalf.shape[0] )
 
+    # Rotate all relevant integrals to the orthogonal AO basis
+    h1e     = to_ortho_ao( Shalf, h1e, shape=2 )
+    eri     = np.einsum( 'ap,bq,abcd,cr,ds->pqrs', Shalf, Shalf, eri, Shalf, Shalf )
+    dip_ao  = to_ortho_ao( Shalf, dip_ao[-1,:,:], shape=2 )
+    quad_ao = to_ortho_ao( Shalf, quad_ao[-1,-1,:,:], shape=2 )
+
+    # # Diagonalize the dipole operator
+    Emu, Umu = np.linalg.eigh( dip_ao )
+
+    # # Rotate h2e and eri to the dipole basis
+    h1e = np.einsum( "ap,ab,bq->pq", Umu, h1e, Umu )
+    print("Starting eri dipole transformation.")
+    eri = np.einsum( "ap,bq,abcd,cr,ds->pqrs", Umu, Umu, eri, Umu, Umu )
+
+    # # Construct the X-operator (X. Li and Y. Zhang arXiv) in orthogonal AO basis
+    Z    = LAM**2 / 4 / WC
+    Emu_minus_Emu  = np.array([  p - q for p in Emu for q in Emu ]).reshape( (len(Emu),len(Emu)) )
+    Emu_minus_Emu2 = np.array([  p - q + r - s for p in Emu for q in Emu for r in Emu for s in Emu ]).reshape( (len(Emu),len(Emu),len(Emu),len(Emu)) )
+    h1e  = np.einsum( "pq,pq->pq", h1e, np.exp( -Z * Emu_minus_Emu**2 ) ) # <p,0|X.T.conj() @ h1e @ X|p,0>
+    print("Starting eri X weighting.")
+    eri  = np.einsum( "pqrs,pqrs->pqrs", eri, np.exp( -Z * Emu_minus_Emu2**2 ) ) # <p,0|X.T.conj() X.T.conj() @ eri @ X @ X|p,0>
+
     # Choose core as guess for Fock matrix
     F = h1e
 
-    # Rotate Fock matrix to orthogonal ao basis
-    F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
-
     # Diagonalize Fock
-    eps, C = eigh( F_ORTHO )
-
-    # Rotate all MOs back to non-orthogonal AO basis
-    C = from_ortho_ao( Shalf, C, shape=1 )
+    eps, C = eigh( F )
 
     # Get density matrix in AO basis
     D    = make_RDM1_ao( C, n_elec_alpha )
@@ -56,33 +55,17 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True ):
     DIIS_flag = False
     MOM_flag  = False
 
-    myDIIS = DIIS( unrestricted=False, ao_overlap=S )
+    myDIIS = DIIS( unrestricted=False, ao_overlap=np.eye(len(Emu)) )
 
     #print("    Guess Energy: %20.12f" % old_energy)
     for iter in range( maxiter ):
 
-        # DSE
-        if ( do_CS == True ):
-            AVEdipole = np.einsum( 'pq,pq->', D, dip_ao[-1,:,:] )
-        else:
-            AVEdipole = 0.0
-        
-        DSE_FACTOR = 0.5 * LAM**2
-        h1e_DSE =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[-1,:,:] + quad_ao[-1,-1,:,:] ) 
-        eri_DSE = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao[-1,:,:], dip_ao[-1,:,:] )
-
-        # Coulomb matrix
+        # Coulomb and exchange matrix
         J     = np.einsum( 'rs,pqrs->pq', D, eri )
-        DSE_J = np.einsum( 'rs,pqrs->pq', D, eri_DSE )
-
-        # Exchange matrix
         K     = np.einsum( 'rs,prsq->pq', D, eri )
-        DSE_K = np.einsum( 'rs,prsq->pq', D, eri_DSE )
-
 
         # Fock matrix
         F  = h1e     + 2 * J     - K
-        F += h1e_DSE +     DSE_J - DSE_K
         
         if ( iter < 5 ):
             F = do_DAMP( F, old_F )
@@ -90,14 +73,8 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True ):
         if ( iter > 2 and iter < 10 ):
             F = myDIIS.extrapolate(F, D)
 
-        # Transfom Fock matrix to orthogonal basis
-        F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
-
         # Diagonalize Fock matrix
-        eps, C = eigh( F_ORTHO )
-
-        # Rotate MOs back to non-orthogonal AO basis
-        C = from_ortho_ao( Shalf, C, shape=1 )
+        eps, C = eigh( F )
 
         if ( MOM_flag == True ):
             occ_inds = do_Max_Overlap_Method( C, old_C, S, n_elec_alpha )
@@ -109,9 +86,7 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True ):
 
         # Get current energy for RHF
         energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K )
-        energy += np.einsum("ab,ab->", D, 2*h1e_DSE + 2*DSE_J - DSE_K )
         energy += nuclear_repulsion_energy
-        #energy += DSE_FACTOR*AVEdipole**2
         energy += 0.5 * WC
 
         dE = energy - old_energy
@@ -135,16 +110,9 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True ):
             MOM_flag = True
             DIIS_flag = False
 
-    #myRHF   = scf.RHF( mol )
-    #e_qedhf = do_QED_HF_ZHY( mol, LAM, WC )
-    #e_rhf   = myRHF.kernel() + 0.5 * WC
-    #e_fci   = fci.FCI( myRHF ).kernel()[0] + 0.5 * WC
-    #print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
-    #print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
-    print('    * QED-RHF Total Energy: %20.12f' % (energy))
-    #print('    * RHF Wavefunction:', np.round( C[:,0],3))
+    print('    * SC-QED-RHF Total Energy: %20.12f' % (energy))
 
-    return energy#, e_qedhf, e_rhf, e_fci
+    return energy
 
 if (__name__ == '__main__' ):
     mol = gto.Mole()
@@ -153,4 +121,4 @@ if (__name__ == '__main__' ):
     mol.symmetry = False
     mol.atom = 'H 0 0 0; H 0 0 2.0'
     mol.build()
-    E_RHF = do_QED_RHF( mol, 0.0, 0.1 )
+    E_RHF = do_QED_SC_RHF( mol, 0.1, 0.1 )
