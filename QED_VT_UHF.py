@@ -6,7 +6,7 @@ from opt_einsum import contract as opt_einsum # Very fast library for tensor con
 
 from pyscf import gto, scf, fci
 
-from tools import get_JK, to_ortho_ao, from_ortho_ao, eigh, make_RDM1_ao, do_DAMP, do_Max_Overlap_Method
+from tools import get_spin_analysis, get_JK, to_ortho_ao, from_ortho_ao, eigh, make_RDM1_ao, do_DAMP, do_Max_Overlap_Method
 from ao_ints import get_ao_integrals, get_dipole_quadrupole
 from DIIS import DIIS
 
@@ -105,17 +105,16 @@ def do_Newton_Raphson( mol, LAM, WC ):
 
         E1 = __do_QED_VT_RHF_f( mol, LAM, WC, f=f )
         print( "f / LAM = %1.6f, E = %1.8f, dE = %1.8f" % (f/LAM, E1, E1-E0) )
-        E_list.append( E1 ) # BEFORE EXIT IF STATEMENT
-        f_list.append( f ) # BEFORE EXIT IF STATEMENT
         if ( abs(E1 - E0) < 1e-8 ):
             print( "f / LAM = %1.4f, E = %1.12f" % (f / LAM, E1) )
             return E_list, f_list
+        E_list.append( E1 )
+        f_list.append( f )
         E0 = E1
         iteration += 1
     return E_list, f_list
 
-
-def do_QED_VT_RHF( mol, LAM, WC, f=None ):
+def do_QED_VT_UHF( mol, LAM, WC, f=None ):
 
     if ( f is None ):
         if ( LAM == 0.0 ): return [[__do_QED_VT_RHF_f( mol, LAM, WC, f=0.0 )], [0.0]]
@@ -125,7 +124,7 @@ def do_QED_VT_RHF( mol, LAM, WC, f=None ):
         print("Doing single point calculation with f = %1.4f" % f)
         return __do_QED_VT_RHF_f( mol, LAM, WC, f=f )
 
-def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True ):
+def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, initial_guess=None ):
 
     S, Shalf, h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
     dip_ao, quad_ao = get_dipole_quadrupole( mol, Shalf.shape[0] )
@@ -148,91 +147,148 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True ):
     # # Apply VT-transformation to h1e and eri
     h1e, eri, G2, G4 = get_h1e_eri_f( f, WC, Emu, h1e, eri )
 
-    # Choose core as guess for Fock matrix
-    F = h1e
+    if ( initial_guess is None ):
+        # Choose core as guess for Fock matrix
+        F_a        = h1e
+        eps_a, C_a = eigh( F_a )
+        C_b        = C_a.copy()
+        D_a        = make_RDM1_ao( C_a, n_elec_alpha )
+        D_b        = make_RDM1_ao( C_b, n_elec_beta )
+    else:
+        # Use initial guess to construct the Fock matrix
+        C_a, C_b   = initial_guess
+        D_a        = make_RDM1_ao( C_a, n_elec_alpha )
+        D_b        = make_RDM1_ao( C_b, n_elec_beta )
+        AVEdipole  = (do_CS) * np.einsum( 'pq,pq->', D_a + D_b, dip_ao[:,:] )
+        
+        DSE_FACTOR = 0.5 * LAM**2
+        h1e_DSE =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[:,:] + quad_ao[:,:] ) 
+        eri_DSE = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao[:,:], dip_ao[:,:] )
 
-    # Diagonalize Fock
-    eps, C = eigh( F )
+        # Coulomb and Exchange Matrices
+        J_a, K_a         = get_JK( D_a, eri )
+        J_b, K_b         = get_JK( D_b, eri )
+        DSE_J_a, DSE_K_a = get_JK( D_a, eri_DSE )
+        DSE_J_b, DSE_K_b = get_JK( D_b, eri_DSE )
 
-    # Get density matrix in AO basis
-    D    = make_RDM1_ao( C, n_elec_alpha )
+        # Fock matrix
+        F_a  = h1e     + J_a + J_b - K_a
+        F_a += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_a
+        F_b  = h1e     + J_a + J_b - K_b
+        F_b += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_b
+
+        eps_a, C_a = eigh( F_a )
+        eps_b, C_b = eigh( F_b )
+        D_a        = make_RDM1_ao( C_a, n_elec_alpha )
+        D_b        = make_RDM1_ao( C_b, n_elec_beta )
 
     e_convergence = 1e-8
     d_convergence = 1e-6
     maxiter       = 2000
 
-    old_energy = np.einsum("ab,ab->", D, 2*h1e ) + nuclear_repulsion_energy
-    old_D = D.copy()
-    old_F = F.copy()
-    old_C = C.copy()
+    old_energy  = np.einsum("ab,ab->", D_a, h1e )
+    old_energy += np.einsum("ab,ab->", D_b, h1e )
+    old_energy += nuclear_repulsion_energy
+    old_C_a = C_a.copy()
+    old_C_b = C_b.copy()
+    old_D_a = D_a.copy()
+    old_D_b = D_b.copy()
+    old_F_a = F_a.copy()
+    old_F_b = F_a.copy()
+    old_dE  = 0.0
+    old_dD  = 0.0
     DIIS_flag = False
     MOM_flag  = False
 
-    myDIIS = DIIS( unrestricted=False, ao_overlap=S )
+    myDIIS = DIIS( ao_overlap=S, unrestricted=True )
 
-    #print("    Guess Energy: %20.12f" % old_energy)
     for iter in range( maxiter ):
 
-        # DSE
-        AVEdipole  = (do_CS) * np.einsum( 'pq,pq->', D, dip_ao[:,:] )
-        DSE_FACTOR = 0.5 * ( LAM - f )**2
+        AVEdipole = (do_CS) * np.einsum( 'pq,pq->', D_a + D_b, dip_ao[:,:] )
+        DSE_FACTOR = 0.5 * (LAM - f)**2
         h1e_DSE    =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[:,:] + quad_ao[:,:] ) 
-        eri_DSE    = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao[:,:], dip_ao[:,:] )
+        eri_DSE    = 2 * DSE_FACTOR * np.einsum( 'pq,rs->pqrs', dip_ao[:,:], dip_ao[:,:] )
 
-        # Coulomb matrix
-        J     = np.einsum( 'rs,pqrs->pq', D, eri )
-        DSE_J = np.einsum( 'rs,pqrs->pq', D, eri_DSE )
-
-        # Exchange matrix
-        K     = np.einsum( 'rs,prsq->pq', D, eri )
-        DSE_K = np.einsum( 'rs,prsq->pq', D, eri_DSE )
-
+        # Coulomb and Exchange Matrices
+        J_a, K_a         = get_JK( D_a, eri )
+        J_b, K_b         = get_JK( D_b, eri )
+        DSE_J_a, DSE_K_a = get_JK( D_a, eri_DSE )
+        DSE_J_b, DSE_K_b = get_JK( D_b, eri_DSE )
 
         # Fock matrix
-        F  = h1e     + 2 * J     - K
-        F += h1e_DSE +     DSE_J - DSE_K
+        F_a  = h1e     + J_a + J_b - K_a
+        F_b  = h1e     + J_a + J_b - K_b
+        F_a += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_a
+        F_b += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_b
         
-        if ( iter < 3 ):
-            F = do_DAMP( F, old_F )
+        if ( iter < 100 ):
+            F_a = do_DAMP( F_a, old_F_a )
+            F_b = do_DAMP( F_b, old_F_b )
 
         # Diagonalize Fock matrix
-        eps, C = eigh( F )
+        eps_a, C_a = eigh( F_a )
+        eps_b, C_b = eigh( F_b )
 
-        if ( MOM_flag == True ):
-            occ_inds = do_Max_Overlap_Method( C, old_C, S, n_elec_alpha )
-        else:
-            occ_inds = (np.arange(n_elec_alpha))
+        if ( iter == 5 ):
+            # Break symmetry by mixing a-HOMO and a-LUMO
+            C_b    = C_a.copy()
+            angle   = np.pi/5
+            HOMO_a = C_a[:,n_elec_alpha-1]
+            LUMO_a = C_a[:,n_elec_alpha+0]
+            C_a[:,n_elec_alpha-1] = HOMO_a * np.cos(angle) + LUMO_a * np.sin(angle)
+            C_b[:,n_elec_beta-1]  = HOMO_a * np.cos(angle) - LUMO_a * np.sin(angle)
+
 
         # Get density matrix in AO basis
-        D = make_RDM1_ao( C, n_elec_alpha )
+        occ_inds_a = (np.arange(n_elec_alpha))
+        occ_inds_b = (np.arange(n_elec_beta))
+        D_a = make_RDM1_ao( C_a, occ_inds_a )
+        D_b = make_RDM1_ao( C_b, occ_inds_b )
 
         # Get current energy for RHF
-        energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K )
-        energy += np.einsum("ab,ab->", D, 2*h1e_DSE + 2*DSE_J - DSE_K )
+        energy  = np.einsum("ab,ab->", D_a, h1e + 0.5*(J_a + J_b - K_a) )
+        energy += np.einsum("ab,ab->", D_b, h1e + 0.5*(J_b + J_a - K_b) )
+        energy += np.einsum("ab,ab->", D_a, h1e_DSE + 0.5*(DSE_J_a + DSE_J_b - DSE_K_a) )
+        energy += np.einsum("ab,ab->", D_b, h1e_DSE + 0.5*(DSE_J_b + DSE_J_a - DSE_K_b) )
         energy += nuclear_repulsion_energy
         #energy += DSE_FACTOR*AVEdipole**2
         energy += 0.5 * WC
 
-
-
         dE = energy - old_energy
-        dD = np.linalg.norm( D - old_D )
-
-        #if ( iter > 50 ):
-        #print("    Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
+        dD = np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b )
 
         old_energy = energy
-        old_D      = D.copy()
+        old_D_a    = D_a.copy()
+        old_D_b    = D_b.copy()
+        old_F_a    = F_a.copy()
+        old_F_b    = F_b.copy()
+        old_dE     = dE*1
+        old_dD     = dD*1
+
+        #if ( iter > 50 ):
+        #    print("    QED-UHF Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 
         if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break
         if ( iter == maxiter-1 ):
-            print("FAILURE: VT-QED-RHF DID NOT CONVERGE")
+            print("FAILURE: VT-QED-UHF DID NOT CONVERGE")
             return float('nan'), float('nan'), float('nan')
+        
+        if ( iter > 100 ): # Try doing DIIS
+            DIIS_flag = True
+        if ( iter > 150 ): # Try doing MOM
+            MOM_flag = True
+            DIIS_flag = False
+
+    # Compute spin operators
+    S2, ss1 = get_spin_analysis( C_a[:,:n_elec_alpha], C_b[:,:n_elec_beta] )
+    print( "Spin Analsysis of UHF Wavefunction:" )
+    print( "\t<S2>                = %1.4f" % (S2) )
+    print( "\tMultiplicity s(s+1) = %1.4f" % (ss1) )
 
     #print('    * VT-QED-RHF Total Energy: %20.12f' % (energy))
 
-    return energy
+    return energy, S2, ss1 
 
 if (__name__ == '__main__' ):
     from matplotlib import pyplot as plt
@@ -246,7 +302,7 @@ if (__name__ == '__main__' ):
 
     LAM = 0.5
     WC  = 0.1
-    E_list, f_list = do_QED_VT_RHF( mol, LAM, WC )
+    E_list, f_list = do_QED_VT_UHF( mol, LAM, WC )
     E      = np.array( E_list )
     f_list = np.array( f_list )
     print( "Final VT-QED-RHF Energy: %1.8f" % E[-1] )
