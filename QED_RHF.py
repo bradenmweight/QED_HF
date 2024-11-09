@@ -62,14 +62,10 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True ):
     for iter in range( maxiter ):
 
         # DSE
-        if ( do_CS == True ):
-            AVEdipole = np.einsum( 'pq,pq->', D, dip_ao[-1,:,:] )
-        else:
-            AVEdipole = 0.0
-        
+        AVEdipole  = (do_CS) * np.einsum( 'pq,pq->', D, dip_ao[-1,:,:] )
         DSE_FACTOR = 0.5 * LAM**2
-        h1e_DSE =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[-1,:,:] + quad_ao[-1,-1,:,:] ) 
-        eri_DSE = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao[-1,:,:], dip_ao[-1,:,:] )
+        h1e_DSE    =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[-1,:,:] + quad_ao[-1,-1,:,:] ) 
+        eri_DSE    = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao[-1,:,:], dip_ao[-1,:,:] )
 
         # Coulomb matrix
         J     = np.einsum( 'rs,pqrs->pq', D, eri )
@@ -84,11 +80,8 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True ):
         F  = h1e     + 2 * J     - K
         F += h1e_DSE +     DSE_J - DSE_K
         
-        if ( iter < 5 ):
+        if ( iter < 3 ):
             F = do_DAMP( F, old_F )
-
-        if ( iter > 2 and iter < 10 ):
-            F = myDIIS.extrapolate(F, D)
 
         # Transfom Fock matrix to orthogonal basis
         F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
@@ -117,8 +110,8 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True ):
         dE = energy - old_energy
         dD = np.linalg.norm( D - old_D )
 
-        if ( iter > 50 ):
-            print("    Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
+        #if ( iter > 50 ):
+        #    print("    Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 
         old_energy = energy
         old_D      = D.copy()

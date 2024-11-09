@@ -49,11 +49,11 @@ def do_RHF( mol ):
         # Fock matrix for RHF
         F = h1e + 2 * J - K
 
-        if ( iter < 5 ):
+        if ( iter < 3 ):
             F = do_DAMP( F, old_F )
         
-        if ( iter > 5 ):
-            myDIIS.extrapolate( F, D )
+        #if ( iter > 2 ):
+        #    myDIIS.extrapolate( F, D )
 
         # Transfom Fock matrix to orthogonal basis
         F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
@@ -74,7 +74,7 @@ def do_RHF( mol ):
         dE = np.abs( energy - old_energy )
         dD = np.linalg.norm( D - old_D )
 
-        #print( '    Iteration %3d: Energy = %4.12f, Energy change = %1.5e, Density change = %1.5e' % (iter, energy, dE, dD ) )
+        print( '    Iteration %3d: Energy = %4.12f, Energy change = %1.5e, Density change = %1.5e' % (iter, energy, dE, dD ) )
 
         old_energy = energy
         old_D      = D.copy()
@@ -82,7 +82,7 @@ def do_RHF( mol ):
         if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break
         if ( iter == maxiter-1 ):
-            print("FAILURE: QED-UHF DID NOT CONVERGE")
+            print("FAILURE: RHF DID NOT CONVERGE")
             return float('nan')
 
     #myRHF = scf.RHF( mol )
@@ -91,9 +91,9 @@ def do_RHF( mol ):
     #e_fci = fci.FCI( myRHF ).kernel()[0]
     #print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
     #print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
-    print('    *     RHF Total Energy (Braden): %20.12f' % (energy))
+    print('    *     RHF Total Energy: %20.12f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
-    return energy#, e_rhf, e_fci
+    return energy #, e_rhf, e_fci
 
 if (__name__ == '__main__' ):
 

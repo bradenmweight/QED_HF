@@ -64,7 +64,7 @@ def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 500
+    maxiter       = 1000
 
     old_energy  = np.einsum("ab,ab->", D_a, h1e )
     old_energy += np.einsum("ab,ab->", D_b, h1e )
@@ -106,12 +106,8 @@ def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
         F_a += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_a
         F_b += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_b
         
-        if ( iter < 5 ): # Do before DIIS
-            F_a = do_DAMP( F_a, old_F_a )
-            F_b = do_DAMP( F_b, old_F_b )
-
-        if ( DIIS_flag == True ):
-           F_a, F_b = myDIIS.extrapolate(F_a, D_a, F_b=F_b, D_b=D_b)
+        F_a = do_DAMP( F_a, old_F_a )
+        F_b = do_DAMP( F_b, old_F_b )
 
         # Transfom Fock matrix to orthogonal basis
         F_ORTHO_a = to_ortho_ao( Shalf, F_a, shape=2 )
@@ -165,8 +161,8 @@ def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
         old_dE     = dE*1
         old_dD     = dD*1
 
-        if ( iter > 50 ):
-            print("    QED-UHF Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
+        #if ( iter > 50 ):
+        #    print("    QED-UHF Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 
         if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break

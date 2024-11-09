@@ -231,7 +231,7 @@ if ( __name__ == "__main__" ):
 
     do_H2_Dissociation( mol )
     do_LiH_Dissociation( mol )
-    do_N2_Dissociation( mol )
+    #do_N2_Dissociation( mol )
 
 
 
