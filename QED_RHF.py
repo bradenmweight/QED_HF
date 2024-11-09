@@ -57,7 +57,7 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 200
+    maxiter       = 2000
 
     old_D  = D.copy()
     old_F  = F.copy()
@@ -84,7 +84,7 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
         
         F = do_DAMP( F, old_F )
 
-        if ( iter > 1 ):
+        if ( iter > 10 ):
             F = myDIIS.extrapolate( F, D )
 
         # Diagonalize Fock matrix
@@ -104,11 +104,11 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
         dE     = energy - old_energy
         dD     = np.linalg.norm( D - old_D )
 
-        if ( iter > 2 and dD > 1.0 ):            
-           inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
-           C    = C[:,inds]
-           D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
-           dD   = 2 * np.linalg.norm( D - old_D )
+        # if ( iter > 5 and dD > 1.0 ):            
+        #    inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
+        #    C    = C[:,inds]
+        #    D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
+        #    dD   = 2 * np.linalg.norm( D - old_D )
 
         #print("    Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 

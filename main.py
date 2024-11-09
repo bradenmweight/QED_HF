@@ -15,7 +15,7 @@ from QED_VT_RHF import do_QED_VT_RHF
 def get_Globals():
 
     global basis_set, do_CS
-    basis_set = 'ccpvdz' # 'aug-ccpvdz'
+    basis_set = '321g' # 'aug-ccpvdz'
     do_CS = True
 
     global LAM_LIST, WC
@@ -231,7 +231,7 @@ if ( __name__ == "__main__" ):
 
     do_H2_Dissociation( mol )
     do_LiH_Dissociation( mol )
-    #do_N2_Dissociation( mol )
+    do_N2_Dissociation( mol )
 
 
 

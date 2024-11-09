@@ -84,7 +84,7 @@ def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess
         print( "f / LAM = %1.6f, E = %1.8f, dE = %1.8f" % (f/LAM, E1, E1-E0) )
         E_list.append( E1 ) # BEFORE EXIT IF STATEMENT
         f_list.append( f ) # BEFORE EXIT IF STATEMENT
-        if ( abs(E1 - E0) < 1e-8 ):
+        if ( abs(E1 - E0) < 1e-6 ):
             print( "f / LAM = %1.4f, E = %1.12f" % (f / LAM, E1) )
             return E_list, f_list
         E0 = E1
@@ -196,9 +196,9 @@ def __do_QED_VT_UHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         F_a = do_DAMP( F_a, old_F_a )
         F_b = do_DAMP( F_b, old_F_b )
 
-        if ( iter > 5 ):
-           F_a = myDIIS_a.extrapolate( F_a, D_a )
-           F_b = myDIIS_b.extrapolate( F_b, D_b )
+        if ( iter > 10 ):
+          F_a = myDIIS_a.extrapolate( F_a, D_a )
+          F_b = myDIIS_b.extrapolate( F_b, D_b )
 
         # Diagonalize Fock matrix
         eps_a, C_a = eigh( F_a )
@@ -231,14 +231,14 @@ def __do_QED_VT_UHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         dE = energy - old_energy
         dD = np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b )
 
-        if ( iter > 5 and dD > 1.0 ):            
-           inds_a = do_Max_Overlap_Method( C_a, old_C_a, (np.arange(n_elec_alpha)) )
-           inds_b = do_Max_Overlap_Method( C_b, old_C_b, (np.arange(n_elec_beta)) )
-           C_a  = C_a[:,inds_a]
-           C_b  = C_b[:,inds_b]
-           D_a  = make_RDM1_ao( C_a, (np.arange(n_elec_alpha)) )
-           D_b  = make_RDM1_ao( C_b, (np.arange(n_elec_beta)) )
-           dD   = 2 * (np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b ))
+        # if ( iter > 5 and dD > 1.0 ):            
+        #    inds_a = do_Max_Overlap_Method( C_a, old_C_a, (np.arange(n_elec_alpha)) )
+        #    inds_b = do_Max_Overlap_Method( C_b, old_C_b, (np.arange(n_elec_beta)) )
+        #    C_a  = C_a[:,inds_a]
+        #    C_b  = C_b[:,inds_b]
+        #    D_a  = make_RDM1_ao( C_a, (np.arange(n_elec_alpha)) )
+        #    D_b  = make_RDM1_ao( C_b, (np.arange(n_elec_beta)) )
+        #    dD   = 2 * (np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b ))
 
         old_energy = energy
         old_D_a    = D_a.copy()

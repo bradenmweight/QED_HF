@@ -77,7 +77,7 @@ def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess
     while ( True ):
         GRAD, EF, EB = get_Gradient( E0, mol, LAM, WC, f )
         HESS         = get_Hessian( E0, EF, EB, mol, LAM, WC, f )
-        f    = f - GRAD / HESS * ( np.random.rand() * (iteration > 5) + 1 * (iteration <=5) )
+        f            = f - GRAD / HESS * ( 1e-3 * (iteration >= 5) + 1 * (iteration < 5) )
         if ( f/LAM > 1.0 or f/LAM < 0.0 ):
             f = f - 0.01 * (-1)*np.sign(GRAD) # Walk the other way this time without using GRAD's value in case it is bogus
 
@@ -85,7 +85,7 @@ def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess
         print( "f / LAM = %1.6f, E = %1.8f, dE = %1.8f" % (f/LAM, E1, E1-E0) )
         E_list.append( E1 ) # BEFORE EXIT IF STATEMENT
         f_list.append( f ) # BEFORE EXIT IF STATEMENT
-        if ( abs(E1 - E0) < 1e-8 ):
+        if ( abs(E1 - E0) < 1e-6 ):
             print( "f / LAM = %1.4f, E = %1.12f" % (f / LAM, E1) )
             return E_list, f_list
         E0 = E1
@@ -162,7 +162,7 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         
         F = do_DAMP( F, old_F )
 
-        if ( iter > 1 ):
+        if ( iter > 10 ):
             F = myDIIS.extrapolate( F, D )
 
         # Diagonalize Fock matrix
@@ -181,11 +181,11 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         dE = energy - old_energy
         dD = np.linalg.norm( D - old_D )
 
-        if ( iter > 2 and dD > 1.0 ):            
-           inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
-           C    = C[:,inds]
-           D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
-           dD   = 2 * np.linalg.norm( D - old_D )
+        # if ( iter > 5 and dD > 1.0 ):            
+        #    inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
+        #    C    = C[:,inds]
+        #    D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
+        #    dD   = 2 * np.linalg.norm( D - old_D )
 
         #print("    Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 

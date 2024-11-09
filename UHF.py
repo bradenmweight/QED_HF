@@ -43,7 +43,7 @@ def do_UHF( mol, return_wfn=False, initial_guess=None ):
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 200
+    maxiter       = 2000
 
     old_C_a = C_a.copy()
     old_C_b = C_b.copy()
@@ -70,9 +70,9 @@ def do_UHF( mol, return_wfn=False, initial_guess=None ):
         F_a = do_DAMP( F_a, old_F_a )
         F_b = do_DAMP( F_b, old_F_b )
 
-        if ( iter > 5 ):
-            F_a = myDIIS_a.extrapolate( F_a, D_a )
-            F_b = myDIIS_b.extrapolate( F_b, D_b )
+        if ( iter > 10 ):
+           F_a = myDIIS_a.extrapolate( F_a, D_a )
+           F_b = myDIIS_b.extrapolate( F_b, D_b )
 
         # Diagonalize Fock matrix
         eps_a, C_a = np.linalg.eigh( F_a )
@@ -99,16 +99,16 @@ def do_UHF( mol, return_wfn=False, initial_guess=None ):
         dE = energy - old_energy
         dD = np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b )
 
-        if ( iter > 5 and dD > 1.0 ):            
-           inds_a = do_Max_Overlap_Method( C_a, old_C_a, (np.arange(n_elec_alpha)) )
-           inds_b = do_Max_Overlap_Method( C_b, old_C_b, (np.arange(n_elec_beta)) )
-           C_a  = C_a[:,inds_a]
-           C_b  = C_b[:,inds_b]
-           D_a  = make_RDM1_ao( C_a, (np.arange(n_elec_alpha)) )
-           D_b  = make_RDM1_ao( C_b, (np.arange(n_elec_beta)) )
-           dD   = 2 * (np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b ))
+        # if ( iter > 5 and dD > 1.0 ):            
+        #    inds_a = do_Max_Overlap_Method( C_a, old_C_a, (np.arange(n_elec_alpha)) )
+        #    inds_b = do_Max_Overlap_Method( C_b, old_C_b, (np.arange(n_elec_beta)) )
+        #    C_a  = C_a[:,inds_a]
+        #    C_b  = C_b[:,inds_b]
+        #    D_a  = make_RDM1_ao( C_a, (np.arange(n_elec_alpha)) )
+        #    D_b  = make_RDM1_ao( C_b, (np.arange(n_elec_beta)) )
+        #    dD   = 2 * (np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b ))
 
-        #print("    UHF Iteration %3d: Energy = %1.12f, dE = %1.12f, dD = %1.12f" % (iter, energy, dE, dD))
+        print("    UHF Iteration %3d: Energy = %1.12f, dE = %1.12f, |dD| = %1.12f" % (iter, energy, dE, dD))
 
         old_energy   = energy
         old_D_a      = D_a.copy()

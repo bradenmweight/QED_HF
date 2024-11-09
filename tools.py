@@ -3,9 +3,6 @@ from numba import njit
 
 def do_Max_Overlap_Method( C, old_C, occ_inds ):
     # Find the best overlap between the new MOs and occupied subspace of old MOs
-    #print( old_C )
-    #print( C )
-
     old_C = old_C[:,occ_inds] # Only consider occupied orbitals of old MOs
     mo_overlap  = np.einsum( "ai,aj->ij", old_C[:,:], C[:,:] )
     p           = np.einsum( "ij->j", mo_overlap ) # j is the index of the new MO
@@ -13,7 +10,7 @@ def do_Max_Overlap_Method( C, old_C, occ_inds ):
     return best_perm
 
 @njit
-def do_DAMP( F, old_F, DAMP=0.75 ):
+def do_DAMP( F, old_F, DAMP=1.0 ):
     return DAMP * F + (1-DAMP) * old_F
 
 def make_RDM1_ao( C, occ_inds ):

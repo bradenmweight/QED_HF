@@ -29,8 +29,9 @@ def do_RHF( mol, initial_guess=None, return_wfn=False ):
 
     e_convergence = 1e-8
     d_convergence = 1e-6
-    maxiter       = 200
+    maxiter       = 2000
 
+    old_C = C.copy()
     old_D = D.copy()
     old_F = F.copy()
 
@@ -46,7 +47,7 @@ def do_RHF( mol, initial_guess=None, return_wfn=False ):
 
         F = do_DAMP( F, old_F )
         
-        if ( iter > 1 ):
+        if ( iter > 10 ):
             F = myDIIS.extrapolate( F, D )
 
         # Diagonalize Fock matrix
@@ -59,16 +60,16 @@ def do_RHF( mol, initial_guess=None, return_wfn=False ):
         energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K )
         energy += nuclear_repulsion_energy
 
-        dE = np.abs( energy - old_energy )
+        dE = energy - old_energy
         dD = np.linalg.norm( D - old_D )
 
-        # if ( iter > 1 ):            
+        # if ( iter > 5 ):            
         #     inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
         #     C    = C[:,inds]
         #     D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
         #     dD   = np.linalg.norm( D - old_D )
 
-        #print( '    Iteration %3d: Energy = %4.12f, Energy change = %1.5e, Density change = %1.5e' % (iter, energy, dE, dD ) )
+        print( '    Iteration %3d: Energy = %4.12f, dE = %1.5e, |dD| = %1.5e' % (iter, energy, dE, dD ) )
 
         old_energy = energy
         old_D      = D.copy()
