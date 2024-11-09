@@ -4,8 +4,12 @@
 #SBATCH -o output.slurm
 #SBATCH -t 1-00:00:00
 #SBATCH -N 1
-#SBATCH --ntasks-per-node=8
-#SBATCH --mem 12GB
+#SBATCH --ntasks-per-node=4
+#SBATCH --mem 10GB
 
-#conda activate pysf
+export OMP_NUM_THREADS=4
+export MKL_NUM_THREADS=4
+
+##### conda activate pysf #####
 python3 main.py
+# python3 test_YuZhang_VT.py

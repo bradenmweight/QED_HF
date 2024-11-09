@@ -1,18 +1,19 @@
 import numpy as np
 from numba import njit
 
-def do_Max_Overlap_Method( C, old_C, ao_overlap, n_elec ):
+def do_Max_Overlap_Method( C, old_C, occ_inds ):
     # Find the best overlap between the new MOs and occupied subspace of old MOs
-    old_C = old_C[:,:n_elec] # Only consider occupied orbitals of old MOs
-    max_overlap = 0.0
-    mo_overlap  = np.einsum( "ai,ab,bj->ij", old_C[:,:], ao_overlap, C[:,:] )
+    #print( old_C )
+    #print( C )
+
+    old_C = old_C[:,occ_inds] # Only consider occupied orbitals of old MOs
+    mo_overlap  = np.einsum( "ai,aj->ij", old_C[:,:], C[:,:] )
     p           = np.einsum( "ij->j", mo_overlap ) # j is the index of the new MO
-    #best_perm   = np.argsort( -p )[:n_elec] # Get n_elec indices of MOs with largest overlap
-    best_perm   = np.argsort( -np.abs(p) )[:n_elec] # Phase of C should not affect this # Get n_elec indices of MOs with largest overlap
+    best_perm   = np.argsort( -np.abs(p) ) # Phase of C should not affect this # Get n_elec indices of MOs with largest overlap
     return best_perm
 
 @njit
-def do_DAMP( F, old_F, DAMP=0.5 ):
+def do_DAMP( F, old_F, DAMP=0.75 ):
     return DAMP * F + (1-DAMP) * old_F
 
 def make_RDM1_ao( C, occ_inds ):
@@ -57,20 +58,6 @@ def get_orbital_gradient( F, n_elec ):
     ov = F[:n_elec,n_elec:]
     vo = F[n_elec:,:n_elec]
     return 2 *( ov - vo )
-
-@njit
-def to_ortho_ao( U, M, shape ):
-    if ( shape == 1 ):
-        return U.T @ M
-    elif ( shape == 2 ):
-        return U.T @ M @ U
-
-@njit
-def from_ortho_ao( U, M, shape ):
-    if ( shape == 1 ):
-        return U @ M
-    elif ( shape == 2 ):
-        return U @ M @ U.T
 
 @njit
 def eigh( F ):

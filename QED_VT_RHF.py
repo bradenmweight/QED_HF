@@ -6,8 +6,8 @@ from opt_einsum import contract as opt_einsum # Very fast library for tensor con
 
 from pyscf import gto, scf, fci
 
-from tools import get_JK, to_ortho_ao, from_ortho_ao, eigh, make_RDM1_ao, do_DAMP, do_Max_Overlap_Method
-from ao_ints import get_ao_integrals, get_dipole_quadrupole
+from ao_ints import get_ao_integrals
+from tools import get_JK, eigh, make_RDM1_ao, do_DAMP, do_Max_Overlap_Method
 from DIIS import DIIS
 
 
@@ -22,43 +22,21 @@ def get_h1e_eri_f( f, WC, Emu, h1e, eri ):
     eri  = np.einsum( "pqrs,pqrs->pqrs", eri, G4 ) # <p,0|X.T.conj() X.T.conj() @ eri @ X @ X|p,0>
     return h1e, eri, G2, G4
 
-# def get_Gradient( E0, mol, LAM, WC, f ):
-#     df = 1e-3
-#     EF = __do_QED_VT_RHF_f( mol, LAM, WC, f=f+df )
-#     GRAD = (EF - E0) / df
-#     if ( abs(GRAD) > 1 ):
-#         print("\tFound large gradient: %1.4f" % GRAD)
-#         print("\tTrying to refine gradient with central difference")
-#         EF = __do_QED_VT_RHF_f( mol, LAM, WC, f=f+2*df )
-#         EB = __do_QED_VT_RHF_f( mol, LAM, WC, f=f-2*df )
-#         GRAD = (EF - EB) / 2 / (2*df)
-#         print("\tRefined gradient %1.4f" % GRAD)
-#     if ( abs(GRAD) > 1 ):
-#         print("\t\tTrying second-order central difference...")
-#         EBB = __do_QED_VT_RHF_f( mol, LAM, WC, f=f-2*df )
-#         EFF = __do_QED_VT_RHF_f( mol, LAM, WC, f=f+2*df )
-#         EB  = __do_QED_VT_RHF_f( mol, LAM, WC, f=f-df )
-#         EF  = __do_QED_VT_RHF_f( mol, LAM, WC, f=f+df )
-#         GRAD = (-EFF + 8*EF - 8 * EB + EFF) / 12 / df
-#         print("\t\tFinal Refined gradient %1.4f" % GRAD)
-    
-#     return GRAD
-
-def get_Gradient( E0, mol, LAM, WC, f ):
+def get_Gradient( E0, mol, LAM, WC, f, do_CS=True, return_wfn=False, initial_guess=None ):
     df = 1e-3
     EF = __do_QED_VT_RHF_f( mol, LAM, WC, f=f+df )
     EB = __do_QED_VT_RHF_f( mol, LAM, WC, f=f-df )
     GRAD = (EF - EB) / 2 / df
     return GRAD, EF, EB
 
-def get_Hessian( E0, EF, EB, mol, LAM, WC, f ):
+def get_Hessian( E0, EF, EB, mol, LAM, WC, f, do_CS=True, return_wfn=False, initial_guess=None ):
     df = 1e-3
     #EF = __do_QED_VT_RHF_f( mol, LAM, WC, f=f+df )
     #EB = __do_QED_VT_RHF_f( mol, LAM, WC, f=f-df )
     HESS = (EF - 2*E0 + EB) / df**2
     return HESS
 
-def do_gradient_descent( mol, LAM, WC ):
+def do_gradient_descent( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None ):
     E_list = []
     f_list = []
     f = LAM/2 # Set to good initial guess
@@ -83,7 +61,7 @@ def do_gradient_descent( mol, LAM, WC ):
         iteration += 1
     return E_list, f_list
 
-def do_Newton_Raphson( mol, LAM, WC ):
+def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None):
     """
     It seems that the energy is always nearly quadratic in the shift parameter f.
     Newton-Raphson should be a good method to minimize the energy in this case since it is exact for a parabola.
@@ -114,27 +92,19 @@ def do_Newton_Raphson( mol, LAM, WC ):
         iteration += 1
     return E_list, f_list
 
-
-def do_QED_VT_RHF( mol, LAM, WC, f=None ):
+def do_QED_VT_RHF( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
 
     if ( f is None ):
-        if ( LAM == 0.0 ): return [[__do_QED_VT_RHF_f( mol, LAM, WC, f=0.0 )], [0.0]]
-        #return do_gradient_descent( mol, LAM, WC )
-        return do_Newton_Raphson( mol, LAM, WC )
+        if ( LAM == 0.0 ): return [[__do_QED_VT_RHF_f( mol, LAM, WC, f=0.0, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )], [0.0]]
+        #return do_gradient_descent( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        return do_Newton_Raphson( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
     else:
         print("Doing single point calculation with f = %1.4f" % f)
-        return __do_QED_VT_RHF_f( mol, LAM, WC, f=f )
+        return __do_QED_VT_RHF_f( mol, LAM, WC, f=f, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
 
-def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True ):
+def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
 
-    S, Shalf, h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
-    dip_ao, quad_ao = get_dipole_quadrupole( mol, Shalf.shape[0] )
-
-    # Rotate all relevant integrals to the orthogonal AO basis
-    h1e     = to_ortho_ao( Shalf, h1e, shape=2 )
-    eri     = opt_einsum( 'ap,bq,abcd,cr,ds->pqrs', Shalf, Shalf, eri, Shalf, Shalf )
-    dip_ao  = to_ortho_ao( Shalf, dip_ao[-1,:,:], shape=2 )
-    quad_ao = to_ortho_ao( Shalf, quad_ao[-1,-1,:,:], shape=2 )
+    h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, dip_ao, quad_ao = get_ao_integrals( mol, dipole_quadrupole=True )
 
     # # Diagonalize the dipole operator
     Emu, Umu = np.linalg.eigh( dip_ao )
@@ -168,9 +138,8 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True ):
     DIIS_flag = False
     MOM_flag  = False
 
-    myDIIS = DIIS( unrestricted=False, ao_overlap=S )
+    myDIIS = DIIS()
 
-    #print("    Guess Energy: %20.12f" % old_energy)
     for iter in range( maxiter ):
 
         # DSE
@@ -187,21 +156,17 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True ):
         K     = np.einsum( 'rs,prsq->pq', D, eri )
         DSE_K = np.einsum( 'rs,prsq->pq', D, eri_DSE )
 
-
         # Fock matrix
         F  = h1e     + 2 * J     - K
         F += h1e_DSE +     DSE_J - DSE_K
         
-        if ( iter < 3 ):
-            F = do_DAMP( F, old_F )
+        F = do_DAMP( F, old_F )
+
+        if ( iter > 1 ):
+            F = myDIIS.extrapolate( F, D )
 
         # Diagonalize Fock matrix
         eps, C = eigh( F )
-
-        if ( MOM_flag == True ):
-            occ_inds = do_Max_Overlap_Method( C, old_C, S, n_elec_alpha )
-        else:
-            occ_inds = (np.arange(n_elec_alpha))
 
         # Get density matrix in AO basis
         D = make_RDM1_ao( C, n_elec_alpha )
@@ -213,12 +178,15 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True ):
         #energy += DSE_FACTOR*AVEdipole**2
         energy += 0.5 * WC
 
-
-
         dE = energy - old_energy
         dD = np.linalg.norm( D - old_D )
 
-        #if ( iter > 50 ):
+        if ( iter > 2 and dD > 1.0 ):            
+           inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
+           C    = C[:,inds]
+           D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
+           dD   = 2 * np.linalg.norm( D - old_D )
+
         #print("    Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 
         old_energy = energy
@@ -228,10 +196,12 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True ):
             break
         if ( iter == maxiter-1 ):
             print("FAILURE: VT-QED-RHF DID NOT CONVERGE")
-            return float('nan'), float('nan'), float('nan')
+            return float('nan')
 
     #print('    * VT-QED-RHF Total Energy: %20.12f' % (energy))
 
+    if ( return_wfn == True ):
+        return energy, C
     return energy
 
 if (__name__ == '__main__' ):
@@ -241,42 +211,56 @@ if (__name__ == '__main__' ):
     mol.basis = "ccpvdz"
     mol.unit = 'Bohr'
     mol.symmetry = False
-    mol.atom = 'Li 0 0 0; H 0 0 3.0'
+    mol.atom = 'H 0 0 0; H 0 0 2.0'
     mol.build()
-
     LAM = 0.5
-    WC  = 0.1
-    E_list, f_list = do_QED_VT_RHF( mol, LAM, WC )
-    E      = np.array( E_list )
-    f_list = np.array( f_list )
-    print( "Final VT-QED-RHF Energy: %1.8f" % E[-1] )
-    plt.plot( np.arange(len(E)), E, "-o" )
-    plt.xlabel("Iteration", fontsize=15)
-    plt.ylabel("Energy (a.u.)", fontsize=15)
-    plt.title("$\\lambda$ = %1.2f a.u." % (LAM), fontsize=15)
-    plt.tight_layout()
-    plt.savefig("E_minimization.jpg", dpi=300)
-    plt.clf()
+    WC  = 1.0
+    E    = do_QED_VT_RHF( mol, LAM, WC )
+    E, C = do_QED_VT_RHF( mol, LAM, WC, return_wfn=True )
+    E    = do_QED_VT_RHF( mol, LAM, WC, initial_guess=C )
 
-    plt.plot( np.arange(len(f_list)), f_list/LAM, "-o" )
-    plt.xlabel("Iteration", fontsize=15)
-    plt.ylabel("Normalized Shift Parameter, $\\frac{f}{\\lambda}$", fontsize=15)
-    plt.title("$\\lambda$ = %1.2f a.u." % (LAM), fontsize=15)
-    plt.tight_layout()
-    plt.savefig("f_minimization.jpg", dpi=300)
-    plt.clf()
+    mol.atom = 'H 0 0 0; H 0 0 10.0'
+    mol.build()
+    E    = do_QED_VT_RHF( mol, LAM, WC )
+    E    = do_QED_VT_RHF( mol, LAM, WC, initial_guess=C )
 
-    # LAM    = 0.5
-    # f_list = np.linspace(0.0, LAM, 21)
-    # E      = np.zeros( (len(f_list)) )
-    # for fi,f in enumerate(f_list):
-    #     print("f = ", f)
-    #     E[fi] = do_QED_VT_RHF( mol, LAM, 0.1, f=f )
-    # print( E )
-    # 
-    # plt.plot( f_list / LAM, E, "-o" )
-    # plt.xlabel("Normalized Shift Parameter, $\\frac{f}{\\lambda}$", fontsize=15)
+
+
+
+
+    # LAM = 0.5
+    # WC  = 0.1
+    # E_list, f_list = do_QED_VT_RHF( mol, LAM, WC )
+    # E      = np.array( E_list )
+    # f_list = np.array( f_list )
+    # print( "Final VT-QED-RHF Energy: %1.8f" % E[-1] )
+    # plt.plot( np.arange(len(E)), E, "-o" )
+    # plt.xlabel("Iteration", fontsize=15)
     # plt.ylabel("Energy (a.u.)", fontsize=15)
     # plt.title("$\\lambda$ = %1.2f a.u." % (LAM), fontsize=15)
     # plt.tight_layout()
-    # plt.savefig("E_f.jpg", dpi=300)
+    # plt.savefig("E_minimization.jpg", dpi=300)
+    # plt.clf()
+
+    # plt.plot( np.arange(len(f_list)), f_list/LAM, "-o" )
+    # plt.xlabel("Iteration", fontsize=15)
+    # plt.ylabel("Normalized Shift Parameter, $\\frac{f}{\\lambda}$", fontsize=15)
+    # plt.title("$\\lambda$ = %1.2f a.u." % (LAM), fontsize=15)
+    # plt.tight_layout()
+    # plt.savefig("f_minimization.jpg", dpi=300)
+    # plt.clf()
+
+    # # LAM    = 0.5
+    # # f_list = np.linspace(0.0, LAM, 21)
+    # # E      = np.zeros( (len(f_list)) )
+    # # for fi,f in enumerate(f_list):
+    # #     print("f = ", f)
+    # #     E[fi] = do_QED_VT_RHF( mol, LAM, 0.1, f=f )
+    # # print( E )
+    # # 
+    # # plt.plot( f_list / LAM, E, "-o" )
+    # # plt.xlabel("Normalized Shift Parameter, $\\frac{f}{\\lambda}$", fontsize=15)
+    # # plt.ylabel("Energy (a.u.)", fontsize=15)
+    # # plt.title("$\\lambda$ = %1.2f a.u." % (LAM), fontsize=15)
+    # # plt.tight_layout()
+    # # plt.savefig("E_f.jpg", dpi=300)

@@ -1,6 +1,8 @@
 import numpy as np
 from tools import eigh
 import psutil
+from opt_einsum import contract as opt_einsum # Very fast library for tensor contractions
+
 
 def get_dipole_quadrupole( mol, n_ao ):
     # Get dipole matrix elements in AO basis with nuclear contribution
@@ -17,7 +19,7 @@ def get_dipole_quadrupole( mol, n_ao ):
 
     return dipole_ao, quadrupole_ao
 
-def get_ao_integrals( mol ):
+def get_ao_integrals( mol, dipole_quadrupole=False ):
 
     # Get overlap matrix and orthogonalizing transformation matrix
     S     = mol.intor('int1e_ovlp')
@@ -54,5 +56,14 @@ def get_ao_integrals( mol ):
     # Construct core electronic Hamiltonian
     h1e = T_AO + V_en
 
-    return S, Shalf, h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy
+    # Rotate all relevant integrals to the orthogonal AO basis
+    h1e     = opt_einsum( 'ap,ab,bq->pq', Shalf, h1e, Shalf )
+    eri     = opt_einsum( 'ap,bq,abcd,cr,ds->pqrs', Shalf, Shalf, eri, Shalf, Shalf ) # This can be expensive. Consider reverting back to rotating only Fock matrix
+    
+    if ( dipole_quadrupole == True ):
+        dip_ao, quad_ao = get_dipole_quadrupole( mol, n_ao )
+        dip_ao          = opt_einsum( 'ap,ab,bq->pq', Shalf, dip_ao[-1,:,:], Shalf )
+        quad_ao         = opt_einsum( 'ap,ab,bq->pq', Shalf, quad_ao[-1,-1,:,:], Shalf )
+        return h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, dip_ao, quad_ao
+    return h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy
 

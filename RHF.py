@@ -3,66 +3,54 @@ import matplotlib.pyplot as plt
 
 from pyscf import gto, scf, fci
 
-from tools import make_RDM1_ao, do_DAMP, to_ortho_ao, from_ortho_ao, eigh
-from ao_ints import get_ao_integrals, get_dipole_quadrupole
+from tools import get_JK, make_RDM1_ao, do_DAMP, eigh, do_Max_Overlap_Method
+from ao_ints import get_ao_integrals
 from DIIS import DIIS
 
-def do_RHF( mol ):
+def do_RHF( mol, initial_guess=None, return_wfn=False ):
 
     # Get ao integrals
-    S, Shalf, h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
+    h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
 
-    # Choose core as guess for Fock
-    F = h1e
-
-    # Rotate Fock to orthogonal basis
-    F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
-
-    # Diagonalize Fock
-    eps, C = np.linalg.eigh( F_ORTHO )
-
-    # Rotate all MOs back to non-orthogonal AO basis
-    C = from_ortho_ao( Shalf, C, shape=1 )
-
-    # Get density matrix in AO basis
-    D    = np.einsum( "ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha] )
+    if ( initial_guess is not None ):
+        C = initial_guess
+        D = make_RDM1_ao( C, n_elec_alpha )
+        J,K = get_JK( D, eri )
+        F = h1e + 2 * J - K
+        eps, C = np.linalg.eigh( F )
+        D = make_RDM1_ao( C, n_elec_alpha )
+        old_energy = np.einsum("ab,ab->", D, 2*h1e + 2*J - K ) + nuclear_repulsion_energy
+    else:
+        # Choose core as guess for Fock
+        F      = h1e
+        eps, C = np.linalg.eigh( F )
+        D      = np.einsum( "ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha] )
+        old_energy = np.einsum("ab,ab->", D, 2*h1e ) + nuclear_repulsion_energy
 
     e_convergence = 1e-8
     d_convergence = 1e-6
     maxiter       = 200
 
-    old_energy = 0.5 * np.einsum("ab,ab->", D, h1e + F ) + nuclear_repulsion_energy
     old_D = D.copy()
     old_F = F.copy()
 
-    myDIIS = DIIS( unrestricted=False, ao_overlap=S )
+    myDIIS = DIIS()
 
-    #print("    Guess Energy: %20.12f" % old_energy)
     for iter in range( maxiter ):
 
-        # Coulomb matrix
-        J = np.einsum( 'rs,pqrs->pq', D, eri )
-
-        # Exchange matrix
-        K = np.einsum( 'rs,psrq->pq', D, eri )
+        # Coulomb and Exchange matrix
+        J, K = get_JK( D, eri )
 
         # Fock matrix for RHF
         F = h1e + 2 * J - K
 
-        if ( iter < 3 ):
-            F = do_DAMP( F, old_F )
+        F = do_DAMP( F, old_F )
         
-        #if ( iter > 2 ):
-        #    myDIIS.extrapolate( F, D )
-
-        # Transfom Fock matrix to orthogonal basis
-        F_ORTHO = to_ortho_ao( Shalf, F, shape=2 )
+        if ( iter > 1 ):
+            F = myDIIS.extrapolate( F, D )
 
         # Diagonalize Fock matrix
-        eps, C = np.linalg.eigh( F_ORTHO )
-
-        # Rotate MOs back to non-orthogonal AO basis
-        C = from_ortho_ao( Shalf, C, shape=1 )
+        eps, C = np.linalg.eigh( F )
 
         # Get density matrix in AO basis
         D  = np.einsum("ai,bi->ab", C[:,:n_elec_alpha], C[:,:n_elec_alpha])
@@ -74,7 +62,13 @@ def do_RHF( mol ):
         dE = np.abs( energy - old_energy )
         dD = np.linalg.norm( D - old_D )
 
-        print( '    Iteration %3d: Energy = %4.12f, Energy change = %1.5e, Density change = %1.5e' % (iter, energy, dE, dD ) )
+        # if ( iter > 1 ):            
+        #     inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
+        #     C    = C[:,inds]
+        #     D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
+        #     dD   = np.linalg.norm( D - old_D )
+
+        #print( '    Iteration %3d: Energy = %4.12f, Energy change = %1.5e, Density change = %1.5e' % (iter, energy, dE, dD ) )
 
         old_energy = energy
         old_D      = D.copy()
@@ -83,17 +77,16 @@ def do_RHF( mol ):
             break
         if ( iter == maxiter-1 ):
             print("FAILURE: RHF DID NOT CONVERGE")
+            if ( return_wfn == True ):
+                return float('nan'), C * 0 + 1
             return float('nan')
 
-    #myRHF = scf.RHF( mol )
-    #e_rhf = myRHF.kernel()
-    # Full configuration interaction
-    #e_fci = fci.FCI( myRHF ).kernel()[0]
-    #print('    * FCI Total Energy (PySCF): %20.12f' % (e_fci))
-    #print('    * RHF Total Energy (PySCF) : %20.12f' % (e_rhf))
     print('    *     RHF Total Energy: %20.12f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
-    return energy #, e_rhf, e_fci
+
+    if ( return_wfn == True ):
+        return energy, C
+    return energy
 
 if (__name__ == '__main__' ):
 
@@ -103,4 +96,11 @@ if (__name__ == '__main__' ):
     mol.symmetry = False
     mol.atom = 'H 0 0 0; H 0 0 2.0'
     mol.build()
-    E_RHF = do_RHF( mol )
+    E    = do_RHF( mol )
+    E, C = do_RHF( mol, return_wfn=True )
+    E    = do_RHF( mol, initial_guess=C )
+
+    mol.atom = 'H 0 0 0; H 0 0 10.0'
+    mol.build()
+    E = do_RHF( mol )
+    E = do_RHF( mol, initial_guess=C )
