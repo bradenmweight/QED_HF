@@ -67,39 +67,49 @@ def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess
     """
     E_list = []
     f_list = []
+    S2_list = []
+    ss1_list = []
     f = LAM/2 # Set to good initial guess
-    E0, _, _ = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
+    E0, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
     E_list.append( E0 )
     f_list.append( f )
+    S2_list.append( S2 )
+    ss1_list.append( ss1 )
     iteration = 1
     print( "f / LAM = %1.6f, E = %1.8f" % (f/LAM, E0) )
     while ( True ):
         GRAD, EF, EB = get_Gradient( E0, mol, LAM, WC, f )
         HESS         = get_Hessian( E0, EF, EB, mol, LAM, WC, f )
-        f            = f - GRAD / HESS * ( 1e-3 * (iteration >= 5) + 1 * (iteration < 5) )
+        f            = f - GRAD / HESS * ( 1e-3 * (iteration >= 30) +  1e-2 * (iteration >= 20) +  1e-1 * (iteration >= 10) + 1 * (iteration < 5) )
         if ( f/LAM > 1.0 or f/LAM < 0.0 ): # This should not happen, but in case it does, walk the other way
-            f = f - 0.01 * (-1)*np.sign(GRAD) # Walk the other way this time without using GRAD's value in case it is bogus
+            f = np.random.rand() * LAM
+            #f = f - 0.01 * (-1)*np.sign(GRAD) # Walk the other way this time without using GRAD's value in case it is bogus
 
-        E1, _, _ = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
+        E1, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
         print( "f / LAM = %1.6f, E = %1.8f, dE = %1.8f" % (f/LAM, E1, E1-E0) )
         E_list.append( E1 ) # BEFORE EXIT IF STATEMENT
         f_list.append( f ) # BEFORE EXIT IF STATEMENT
-        if ( abs(E1 - E0) < 1e-6 ):
+        S2_list.append( S2 ) # BEFORE EXIT IF STATEMENT
+        ss1_list.append( ss1 ) # BEFORE EXIT IF STATEMENT
+        if ( abs(E1 - E0) < 1e-6 or abs(f_list[-2]/LAM - f_list[-1]/LAM) < 1e-4 ):
             print( "f / LAM = %1.4f, E = %1.12f" % (f / LAM, E1) )
-            return E_list, f_list
+            return E_list, f_list, S2_list, ss1_list
         E0 = E1
         iteration += 1
-    return E_list, f_list
 
 def do_QED_VT_UHF( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
 
     if ( f is None ):
-        if ( LAM == 0.0 ): return [[__do_QED_VT_UHF_f( mol, LAM, WC, f=0.0, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )], [0.0]]
+        if ( LAM == 0.0 ): 
+            f = 0.0
+            E, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+            return [E], [f], [S2], [ss1]
         #return do_gradient_descent( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
         return do_Newton_Raphson( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
     else:
         print("Doing single point calculation with f = %1.4f" % f)
-        return __do_QED_VT_UHF_f( mol, LAM, WC, f=f, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        E, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        return [E], [f], [S2], [ss1]
 
 def __do_QED_VT_UHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
 
@@ -259,7 +269,7 @@ def __do_QED_VT_UHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
     # Compute spin operators
     S2, ss1 = get_spin_analysis( C_a[:,:n_elec_alpha], C_b[:,:n_elec_beta] )
     #print( "Spin Analsysis of UHF Wavefunction:" )
-    print( "\t<S2>                = %1.4f" % (S2) )
+    #print( "\t<S2>                = %1.4f" % (S2) )
     #print( "\tMultiplicity s(s+1) = %1.4f" % (ss1) )
 
     #print('    * VT-QED-RHF Total Energy: %20.12f' % (energy))

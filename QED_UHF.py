@@ -140,7 +140,7 @@ def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
         old_dE     = dE*1
         old_dD     = dD*1
 
-        print("    QED-UHF Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
+        #print("    QED-UHF Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 
         if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
             break
@@ -152,9 +152,9 @@ def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
 
     # Compute spin operators
     S2, ss1 = get_spin_analysis( C_a[:,:n_elec_alpha], C_b[:,:n_elec_beta] )
-    print( "Spin Analsysis of UHF Wavefunction:" )
-    print( "\t<S2>                = %1.4f" % (S2) )
-    print( "\tMultiplicity s(s+1) = %1.4f" % (ss1) )
+    #print( "Spin Analsysis of UHF Wavefunction:" )
+    #print( "\t<S2>                = %1.4f" % (S2) )
+    #print( "\tMultiplicity s(s+1) = %1.4f" % (ss1) )
 
     print('    * QED-UHF Total Energy: %1.8f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))

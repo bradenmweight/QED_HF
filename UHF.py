@@ -108,7 +108,7 @@ def do_UHF( mol, return_wfn=False, initial_guess=None ):
         #    D_b  = make_RDM1_ao( C_b, (np.arange(n_elec_beta)) )
         #    dD   = 2 * (np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b ))
 
-        print("    UHF Iteration %3d: Energy = %1.12f, dE = %1.12f, |dD| = %1.12f" % (iter, energy, dE, dD))
+        #print("    UHF Iteration %3d: Energy = %1.12f, dE = %1.12f, |dD| = %1.12f" % (iter, energy, dE, dD))
 
         old_energy   = energy
         old_D_a      = D_a.copy()
@@ -122,9 +122,9 @@ def do_UHF( mol, return_wfn=False, initial_guess=None ):
 
     # Compute spin operators
     S2, ss1 = get_spin_analysis( C_a[:,:n_elec_alpha], C_b[:,:n_elec_beta] )
-    print( "Spin Analsysis of UHF Wavefunction:" )
-    print( "\t<S2>                = %1.4f" % (S2) )
-    print( "\tMultiplicity s(s+1) = %1.4f" % (ss1) )
+    #print( "Spin Analsysis of UHF Wavefunction:" )
+    #print( "\t<S2>                = %1.4f" % (S2) )
+    #print( "\tMultiplicity s(s+1) = %1.4f" % (ss1) )
 
     print('    * UHF Total Energy:    %1.8f' % (energy))
     # print('    * UHF Wavefunction:', np.round( C_a[:,0],3))

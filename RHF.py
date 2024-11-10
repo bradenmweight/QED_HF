@@ -69,7 +69,7 @@ def do_RHF( mol, initial_guess=None, return_wfn=False ):
         #     D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
         #     dD   = np.linalg.norm( D - old_D )
 
-        print( '    Iteration %3d: Energy = %4.12f, dE = %1.5e, |dD| = %1.5e' % (iter, energy, dE, dD ) )
+        #print( '    Iteration %3d: Energy = %4.12f, dE = %1.5e, |dD| = %1.5e' % (iter, energy, dE, dD ) )
 
         old_energy = energy
         old_D      = D.copy()
