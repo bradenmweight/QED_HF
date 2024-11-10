@@ -75,3 +75,28 @@ def get_ao_integrals( mol ):
     
     return h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy
 
+
+
+
+if ( __name__ == "__main__" ):
+
+    import pyscf.gto as gto
+    from pyscf.tools import cubegen
+
+    mol = gto.Mole()
+    mol.basis = "sto3g"
+    mol.unit = 'Bohr'
+    mol.symmetry = False
+    #mol.atom = 'H 0 0 0; H 0 0 2.0'
+    mol.atom = 'Li 0 0 0; H 0 0 2.0'
+    mol.verbose = 0
+    mol.build()
+
+    # Define a set of (x,y,z) coordinates and evaluate the GTOs at these points
+    nx,ny,nz = 50,50,50
+    grid     = np.meshgrid( np.linspace(-1,3,nx), np.linspace(-1,3,ny), np.linspace(-1,3,nz) )
+    grid     = np.array( grid ).reshape( (3,-1) ).T
+    gto_xyz  = mol.eval_gto("GTOval_cart", coords=grid  )
+    gto_xyz  = gto_xyz.reshape( (nx,ny,nz,-1) ).sum(axis=-1) # Sum over the AOs
+    myCUBE   = cubegen.Cube( mol, nx=nx, ny=ny, nz=nz )
+    myCUBE.write( field=gto_xyz, fname="gto.cube" )
