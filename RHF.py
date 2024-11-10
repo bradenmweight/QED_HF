@@ -7,7 +7,7 @@ from tools import get_JK, make_RDM1_ao, do_DAMP, eigh, do_Max_Overlap_Method
 from ao_ints import get_ao_integrals
 from DIIS import DIIS
 
-def do_RHF( mol, initial_guess=None, return_wfn=False ):
+def do_RHF( mol, initial_guess=None, return_wfn=False, return_MO_energies=False ):
 
     # Get ao integrals
     h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
@@ -82,12 +82,15 @@ def do_RHF( mol, initial_guess=None, return_wfn=False ):
                 return float('nan'), C * 0 + 1
             return float('nan')
 
-    print('    *     RHF Total Energy: %20.12f' % (energy))
+    #print('    *     RHF Total Energy: %20.12f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
 
+    out_list = [energy]
     if ( return_wfn == True ):
-        return energy, C
-    return energy
+        out_list.append( C )
+    if ( return_MO_energies == True ):
+        out_list.append( eps )
+    return out_list
 
 if (__name__ == '__main__' ):
 
