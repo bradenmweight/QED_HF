@@ -45,7 +45,7 @@ def do_RHF( mol, initial_guess=None, return_wfn=False, return_MO_energies=False 
         # Fock matrix for RHF
         F = h1e + 2 * J - K
 
-        F = do_DAMP( F, old_F )
+        #F = do_DAMP( F, old_F )
         
         if ( iter > 10 ):
             F = myDIIS.extrapolate( F, D )
@@ -108,3 +108,5 @@ if (__name__ == '__main__' ):
     mol.build()
     E = do_RHF( mol )
     E = do_RHF( mol, initial_guess=C )
+    
+    print("Done with RHF.")

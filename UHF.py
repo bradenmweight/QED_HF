@@ -7,7 +7,7 @@ from ao_ints import get_ao_integrals
 from tools import eigh, make_RDM1_ao, get_spin_analysis, do_DAMP, get_JK, do_Max_Overlap_Method
 from DIIS import DIIS
 
-def do_UHF( mol, return_wfn=False, initial_guess=None ):
+def do_UHF( mol, return_wfn=False, initial_guess=None, return_MO_energies=False ):
 
     # Get ao integrals
     h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
@@ -67,25 +67,32 @@ def do_UHF( mol, return_wfn=False, initial_guess=None ):
         F_a = h1e + J_a + J_b - K_a
         F_b = h1e + J_b + J_a - K_b
 
-        F_a = do_DAMP( F_a, old_F_a )
-        F_b = do_DAMP( F_b, old_F_b )
+        if ( iter < 6 ):
+           F_a = do_DAMP( F_a, old_F_a )
+           F_b = do_DAMP( F_b, old_F_b )
 
-        if ( iter > 10 ):
-           F_a = myDIIS_a.extrapolate( F_a, D_a )
-           F_b = myDIIS_b.extrapolate( F_b, D_b )
+        # if ( iter > 5 ):
+        #    F_a = myDIIS_a.extrapolate( F_a, D_a )
+        #    F_b = myDIIS_b.extrapolate( F_b, D_b )
 
         # Diagonalize Fock matrix
         eps_a, C_a = np.linalg.eigh( F_a )
         eps_b, C_b = np.linalg.eigh( F_b )
 
         if ( iter == 5 ):
-            # Break symmetry by mixing a-HOMO and a-LUMO
-            C_b    = C_a.copy()
-            angle  = np.pi/5
-            HOMO_a = C_a[:,n_elec_alpha-1]
-            LUMO_a = C_a[:,n_elec_alpha+0]
-            C_a[:,n_elec_alpha-1] = HOMO_a * np.cos(angle) + LUMO_a * np.sin(angle)
-            C_b[:,n_elec_beta-1]  = HOMO_a * np.cos(angle) - LUMO_a * np.sin(angle)
+            if ( mol.basis == "sto3g" or mol.basis == "sto-3g" ):
+                C_a[:,0] = C_a[:,0] + C_a[:,1]
+                C_b[:,0] = C_b[:,0] - C_b[:,1]
+            else:
+                # Break symmetry by mixing a-HOMO and a-LUMO
+                C_b    = C_a.copy()
+                angle  = np.pi/4
+                HOMO_a = C_a[:,n_elec_alpha-1]
+                LUMO_a = C_a[:,n_elec_alpha+0]
+                C_a[:,n_elec_alpha-1] = HOMO_a * np.cos(angle) + LUMO_a * np.sin(angle)
+                C_b[:,n_elec_beta-1]  = HOMO_a * np.cos(angle) - LUMO_a * np.sin(angle)
+        
+
 
         # Get density matrix in AO basis
         D_a  = np.einsum("ai,bi->ab", C_a[:,:n_elec_alpha], C_a[:,:n_elec_alpha])
@@ -114,7 +121,7 @@ def do_UHF( mol, return_wfn=False, initial_guess=None ):
         old_D_a      = D_a.copy()
         old_D_b      = D_b.copy()
 
-        if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
+        if ( iter > 6 and abs(dE) < e_convergence and dD < d_convergence ):
             break
         if ( iter == maxiter-1 ):
             print("FAILURE: QED-UHF DID NOT CONVERGE")
@@ -126,13 +133,16 @@ def do_UHF( mol, return_wfn=False, initial_guess=None ):
     #print( "\t<S2>                = %1.4f" % (S2) )
     #print( "\tMultiplicity s(s+1) = %1.4f" % (ss1) )
 
-    print('    * UHF Total Energy:    %1.8f' % (energy))
+    #print('    * UHF Total Energy:    %1.8f' % (energy))
     # print('    * UHF Wavefunction:', np.round( C_a[:,0],3))
     # print('    * UHF Wavefunction:', np.round( C_b[:,0],3))
     
+    out_list = [energy, S2, ss1]
     if ( return_wfn == True ):
-        return energy, S2, ss1, np.array([C_a, C_b])
-    return energy, S2, ss1
+        out_list.append( np.array([C_a, C_b]) )
+    if ( return_MO_energies == True ):
+        out_list.append( np.array([eps_a, eps_b]) )
+    return out_list
 
 if (__name__ == '__main__' ):
 
@@ -150,3 +160,5 @@ if (__name__ == '__main__' ):
     mol.build()
     E, S2, ss1, = do_UHF( mol )
     E, S2, ss1, = do_UHF( mol, initial_guess=C )
+
+    print("Done with UHF.")

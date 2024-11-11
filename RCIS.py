@@ -1,7 +1,9 @@
 import numpy as np
 from opt_einsum import contract as opt_einsum # Very fast library for tensor contractions
 
-from pyscf import gto, scf, tdscf
+from pyscf import gto
+
+from pyscf_results import get_RCIS_pyscf
 
 from RHF import do_RHF
 from ao_ints import get_ao_integrals, get_electric_dipole_ao, get_magnetic_dipole_ao, get_electric_quadrupole_ao
@@ -19,14 +21,13 @@ def get_off_diagonal_overlap( mol_1, mol_2 ):
     n_ao = S.shape[0]//2
     return S[:n_ao,n_ao:] # Only consider the overlap between the two molecules
 
-def compute_spatial_overlap( CIS_1, CIS_2, mo_1, mo_2, mol_1, mol_2 ):
+def compute_CIS_overlap( CIS_1, CIS_2, mo_1, mo_2, mol_1, mol_2 ):
     """
     Assume that mo_i and CIS_i are in the orthogonal ao basis.
     Therefore, we need to know the non-orthogonal overlap matrix.
     """
     n_occ,n_vir,nstates = CIS_1.shape
     o,v                 = slice(0,n_occ), slice(n_occ,n_occ+n_vir)
-    S_AB                = get_off_diagonal_overlap( mol_1, mol_2 )
     S_1                 = mol_1.intor('int1e_ovlp')
     S_2                 = mol_2.intor('int1e_ovlp')
     s_1, u_1            = np.linalg.eigh(S_1)
@@ -34,15 +35,15 @@ def compute_spatial_overlap( CIS_1, CIS_2, mo_1, mo_2, mol_1, mol_2 ):
     Shalf_1             = u_1 @ np.diag(1/np.sqrt(s_1)) @ u_1.T
     Shalf_2             = u_2 @ np.diag(1/np.sqrt(s_2)) @ u_2.T
 
-    n_ao   = mo_1.shape[0]
     mo_1_o = mo_1[:,o]
     mo_1_v = mo_1[:,v]
     mo_2_o = mo_2[:,o]
     mo_2_v = mo_2[:,v]
 
-    S_AB_ORTHO = opt_einsum( "pi,pq,qj->ij", Shalf_1, S_AB, Shalf_2 )
-    #OVLP       = 0.500 * opt_einsum( "ovJ,po,pv,pq,qo,qv,ovK->JK", CIS_1, mo_1_o, mo_1_v, S_AB_ORTHO, mo_2_o, mo_2_v, CIS_2 )
-    OVLP       = 0.500 * opt_einsum( "ovJ,ovK->JK", CIS_1, CIS_2 ) # Does not acount for changes in AO or MO basis
+    S_AB       = get_off_diagonal_overlap( mol_1, mol_2 )
+    S_AB_ORTHO = opt_einsum( "pi,pq,qj->ij", Shalf_1, S_AB, Shalf_2 ) # Overlap between the two molecules in their orthogonal bases
+    OVLP       = 0.500 * opt_einsum( "ovJ,po,pv,pq,qo,qv,ovK->JK", CIS_1, mo_1_o, mo_1_v, S_AB_ORTHO, mo_2_o, mo_2_v, CIS_2 )
+    #OVLP       = 0.500 * opt_einsum( "ovJ,ovK->JK", CIS_1, CIS_2 ) # Does not acount for changes in AO or MO basis
     print( np.round( OVLP, 3 ) )
     print("Overlap code is not working right...")
     
@@ -132,7 +133,7 @@ def do_RCIS( mol, C_HF=None, eps_HF=None, return_wfn=False, nstates=1, symmetry=
     if ( C_HF is None or len(C_HF.shape) == 3 ):
         E_HF, C_HF, eps_HF = do_RHF( mol, return_wfn=True, return_MO_energies=True )
 
-    # Get the h1e and ERIs (and other integrals) in orthogonal AO basis
+    # Get the h1e and ERIs in orthogonal AO basis
     h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy = get_ao_integrals( mol )
     assert( n_elec_alpha == n_elec_beta ), "RCIS only implemented for closed-shell systems"
     
@@ -154,24 +155,39 @@ def do_RCIS( mol, C_HF=None, eps_HF=None, return_wfn=False, nstates=1, symmetry=
 
     ###### HERE IS THE EDUCATIONAL APPROACH ######
     ###### Build the Hamiltonian using for-loops ######
-    # ovov = eri[o,v,o,v]
-    # oovv = eri[o,o,v,v]
-    # H    = np.zeros( (n_occ,n_vir,n_occ,n_vir) )
-    # for o1 in range(n_occ):
-    #     for v1 in range(n_vir):
-    #         H[o1,v1,o1,v1] += eps_vir[v1] - eps_occ[o1]
-    #         for o2 in range(n_occ):
-    #            for v2 in range(n_vir):
-    #                H[o1,v1,o2,v2] += (do_Singlets) * 2.0 * ovov[o1,v1,o2,v2] - oovv[o1,o2,v1,v2]
-    # H = H.reshape( (n_occ*n_vir, n_occ*n_vir) )
+    ovov = eri[o,v,o,v]
+    oovv = eri[o,o,v,v]
+    H    = np.zeros( (n_occ,n_vir,n_occ,n_vir) )
+    for o1 in range(n_occ):
+        for v1 in range(n_vir):
+            H[o1,v1,o1,v1] += eps_vir[v1] - eps_occ[o1]
+            for o2 in range(n_occ):
+               for v2 in range(n_vir):
+                   H[o1,v1,o2,v2] += (do_Singlets) * 2.0 * ovov[o1,v1,o2,v2] - oovv[o1,o2,v1,v2]
+    H = H.reshape( (n_occ*n_vir, n_occ*n_vir) )
     ###############################################
 
     ###### HERE IS THE FAST APPROACH ######
-    ###### Build the Hamiltonian without using for-loops ######
-    H = np.diag((eps_vir[:,None] - eps_occ).flatten() )
-    H += (do_Singlets) * 2.0 * eri[o,v,o,v].reshape( (n_occ*n_vir,n_occ*n_vir) )
-    H -= eri[o,o,v,v].reshape( (n_occ*n_vir,n_occ*n_vir) )
+    # H = np.diag((eps_vir[:,None] - eps_occ).flatten() ).reshape((n_occ,n_vir,n_occ,n_vir))
+    # H += eri[o,v,o,v].reshape( (n_occ*n_vir,n_occ*n_vir) ) * (do_Singlets) * 2.0
+    # H -= eri[o,o,v,v].reshape( (n_occ*n_vir,n_occ*n_vir) )
+    H  = H.reshape( (n_occ*n_vir, n_occ*n_vir) )
     ###############################################
+
+    ###### HERE IS THE PYSCF APPROACH ######
+    H  = np.diag((eps_vir[:,None] - eps_occ).flatten() ).reshape((n_occ,n_vir,n_occ,n_vir))
+    H += np.einsum( 'iajb->iajb', eri[o,v,o,v] ) * (do_Singlets) * 2.0
+    H -= np.einsum( 'ijba->iajb', eri[o,o,v,v] )
+    H  = H.reshape( (n_occ*n_vir, n_occ*n_vir) )
+    ###############################################
+
+    from matplotlib import pyplot as plt
+    plt.imshow( np.abs(H - np.diag(np.diagonal(H))) )
+    #plt.imshow( np.abs(H) )
+    plt.colorbar(pad=0.01)
+    plt.savefig("H.jpg", dpi=300)
+    plt.clf()
+
 
     E_RCIS, C_RCIS = np.linalg.eigh( H )
     #if ( nstates > len(E_RCIS) ):
@@ -205,21 +221,6 @@ def do_RCIS( mol, C_HF=None, eps_HF=None, return_wfn=False, nstates=1, symmetry=
         return E_RCIS
     return out_list
 
-
-def get_CIS_pyscf( mol, nstates=1, symmetry="s" ):
-    if ( symmetry[0].lower() == "s" ):
-        singlet = True
-    elif ( symmetry[0].lower() == "t" ):
-        singlet = False
-    # CIS calculation using PySCF
-    mf = scf.RHF( mol )
-    mf.kernel()
-    myci = tdscf.TDHF( mf )
-    myci.nroots = nstates
-    myci.singlet = singlet
-    myci.kernel()
-    return mf.e_tot, myci.e_tot 
-
 if ( __name__ == "__main__"):
     
 
@@ -227,31 +228,33 @@ if ( __name__ == "__main__"):
     mol.basis = "sto3g"
     mol.unit = 'Bohr'
     mol.symmetry = False
-    #mol.atom = 'H 0 0 0; H 0 0 2.0'
-    mol.atom = 'Li 0 0 0; H 0 0 2.0'
+    mol.atom = 'H 0 0 0; H 0 0 2.0'
+    #mol.atom = 'Li 0 0 0; H 0 0 2.0'
     mol.verbose = 0
     mol.build()
+
     E, C = do_RHF( mol, return_wfn=True )
     #print( "RHF    (BMW)         : %1.5f" % (E) )
 
     nstates = 5
+    E_RHF_pyscf, E_RCIS_S_pyscf = get_RCIS_pyscf( mol, nstates=nstates, symmetry="s" )
+    E_RHF_pyscf, E_RCIS_T_pyscf = get_RCIS_pyscf( mol, nstates=nstates, symmetry="t" )
+    E_RCIS_S                    = do_RCIS(       mol, nstates=nstates, symmetry="s" )
+    E_RCIS_T                    = do_RCIS(       mol, nstates=nstates, symmetry="t" )
 
-    E_RHF_pyscf, E_RCIS_S_pyscf = get_CIS_pyscf( mol, nstates=nstates, symmetry="s" )
-    E_RHF_pyscf, E_RCIS_T_pyscf = get_CIS_pyscf( mol, nstates=nstates, symmetry="t" )
-    E_RCIS_S = do_RCIS( mol, nstates=nstates, symmetry="s" )
-    E_RCIS_T = do_RCIS( mol, nstates=nstates, symmetry="t" )
+    print("  BMW RHF Energy (a.u.): %1.6f" % (E))
+    print("PySCF RHF Energy (a.u.): %1.6f" % (E_RHF_pyscf))
 
     print( "PySCF Singlet Transition Energy (eV): %1.6f" % ((E_RCIS_S_pyscf[0]-E_RHF_pyscf)*27.2114))
     print( "  BMW Singlet Transition Energy (eV): %1.6f" % ((E_RCIS_S[0])      *27.2114))
-    if ( mol.basis == "sto3g" ):
+    if ( mol.basis == "sto3g" and mol.atom[0] == "H" and mol.atom.split(";")[-1].strip()[0] == "H" ):
         print( "  G16 Singlet Transition Energy (eV): %1.6f" % (18.3805))
     print("")
     print( "PySCF Triplet Transition Energy (eV): %1.6f" % ((E_RCIS_T_pyscf[0]-E_RHF_pyscf)*27.2114))
     print( "  BMW Triplet Transition Energy (eV): %1.6f" % ((E_RCIS_T[0])      *27.2114))
-    if ( mol.basis == "sto3g" ):
+    if ( mol.basis == "sto3g" and mol.atom[0] == "H" and mol.atom.split(";")[-1].strip()[0] == "H" ):
         print( "  G16 Triplet Transition Energy (eV): %1.6f" % (7.4688))
     
-    E_CIS_S, (C_CIS_S, C_HF), moments = do_RCIS( mol, nstates=nstates, symmetry="s", return_wfn=True, calc_moments=True )
-    E_CIS_T, (C_CIS_T, C_HF)          = do_RCIS( mol, nstates=nstates, symmetry="t", return_wfn=True )
-
-    compute_spatial_overlap( C_CIS_S, C_CIS_S, C_HF, C_HF, mol, mol )
+    # E_CIS_S, (C_CIS_S, C_HF), moments = do_RCIS( mol, nstates=nstates, symmetry="s", return_wfn=True, calc_moments=True )
+    # E_CIS_T, (C_CIS_T, C_HF)          = do_RCIS( mol, nstates=nstates, symmetry="t", return_wfn=True )
+    # compute_CIS_overlap( C_CIS_S, C_CIS_S, C_HF, C_HF, mol, mol )

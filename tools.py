@@ -10,7 +10,7 @@ def do_Max_Overlap_Method( C, old_C, occ_inds ):
     return best_perm
 
 @njit
-def do_DAMP( F, old_F, DAMP=1.0 ):
+def do_DAMP( F, old_F, DAMP=0.75 ):
     return DAMP * F + (1-DAMP) * old_F
 
 def make_RDM1_ao( C, occ_inds ):

@@ -215,14 +215,18 @@ def __do_QED_VT_UHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         eps_b, C_b = eigh( F_b )
 
         if ( iter == 5 ):
-            # Break symmetry by mixing a-HOMO and a-LUMO
-            C_b    = C_a.copy()
-            angle   = np.pi/5
-            HOMO_a = C_a[:,n_elec_alpha-1]
-            LUMO_a = C_a[:,n_elec_alpha+0]
-            C_a[:,n_elec_alpha-1] = HOMO_a * np.cos(angle) + LUMO_a * np.sin(angle)
-            C_b[:,n_elec_beta-1]  = HOMO_a * np.cos(angle) - LUMO_a * np.sin(angle)
-
+            if ( mol.basis == "sto3g" or mol.basis == "sto-3g" ):
+                C_a[:,0] = C_a[:,0] + C_a[:,1]
+                C_b[:,0] = C_b[:,0] - C_b[:,1]
+            else:
+                # Break symmetry by mixing a-HOMO and a-LUMO
+                C_b    = C_a.copy()
+                angle  = np.pi/4
+                HOMO_a = C_a[:,n_elec_alpha-1]
+                LUMO_a = C_a[:,n_elec_alpha+0]
+                C_a[:,n_elec_alpha-1] = HOMO_a * np.cos(angle) + LUMO_a * np.sin(angle)
+                C_b[:,n_elec_beta-1]  = HOMO_a * np.cos(angle) - LUMO_a * np.sin(angle)
+        
         # Get density matrix in AO basis
         occ_inds_a = (np.arange(n_elec_alpha))
         occ_inds_b = (np.arange(n_elec_beta))
@@ -260,7 +264,7 @@ def __do_QED_VT_UHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
 
         #print("    QED-UHF Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 
-        if ( iter > 2 and abs(dE) < e_convergence and dD < d_convergence ):
+        if ( iter > 6 and abs(dE) < e_convergence and dD < d_convergence ):
             break
         if ( iter == maxiter-1 ):
             print("FAILURE: VT-QED-UHF DID NOT CONVERGE")
