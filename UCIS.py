@@ -273,9 +273,9 @@ if ( __name__ == "__main__"):
 
     from RHF import do_RHF
     from RCIS import do_RCIS
-    R_LIST  = np.linspace(0.5,3.5,100)/0.529 # Angstrom to Bohr
+    R_LIST  = np.linspace(0.5,3.5,400)/0.529 # Angstrom to Bohr
     nstates = 2
-    E_LIST_U    = np.zeros( (len(R_LIST), nstates*2+1) )
+    E_LIST_U    = np.zeros( (len(R_LIST), nstates+1) )
     E_LIST_R_S  = np.zeros( (len(R_LIST), nstates+1) )
     E_LIST_R_T  = np.zeros( (len(R_LIST), nstates+1) )
     for Ri,R in enumerate(R_LIST):
@@ -283,7 +283,7 @@ if ( __name__ == "__main__"):
         mol.atom = 'H 0 0 0; H 0 0 %1.2f' % (R)
         mol.build()
         E_UHF, S2, ss1, C_UHF, eps_HF = do_UHF( mol, return_wfn=True, return_MO_energies=True )
-        E_UCIS                        = do_UCIS( mol, C_HF=C_UHF, eps_HF=eps_HF, nstates=nstates*2, spin_flipping=True )
+        E_UCIS                        = do_UCIS( mol, C_HF=C_UHF, eps_HF=eps_HF, nstates=nstates, spin_flipping=False )
         E_LIST_U[Ri,0]                = E_UHF
         E_LIST_U[Ri,1:]               = E_UCIS + E_UHF
         E_RHF, C_UHF, eps_HF          = do_RHF( mol, return_wfn=True, return_MO_energies=True )

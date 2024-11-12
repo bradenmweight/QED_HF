@@ -32,7 +32,7 @@ H -2.2884450671   -0.3205358657    0.9079354075
 '''
     mol.build()
 
-    WC     = 1.0
+    WC     = 0.5
     LAM    = 0.5
     f_list = np.linspace(0.0, LAM, 21)
     E_VT_QEDRHF       = np.zeros( (len(f_list)) )
@@ -40,7 +40,7 @@ H -2.2884450671   -0.3205358657    0.9079354075
     E_VT_S2           = np.zeros( (len(f_list)) )
     E_VT_ss1          = np.zeros( (len(f_list)) )
     E_RHF_pyscf       = scf.RHF( mol ).kernel()
-    E_UHF_pyscf       = do_UHF_pyscf( mol )
+    E_UHF_pyscf, _   = do_UHF_pyscf( mol )
     E_RHF             = do_RHF( mol )
     E_UHF, S2, ss1    = do_UHF( mol )
     E_QEDRHF          = do_QED_RHF( mol, LAM, WC )
@@ -49,8 +49,8 @@ H -2.2884450671   -0.3205358657    0.9079354075
     for fi,f in enumerate(f_list):
          E_VT_QEDRHF[fi]                            = do_QED_VT_RHF( mol, LAM, WC, f=f )
          E_VT_QEDUHF[fi], E_VT_S2[fi], E_VT_ss1[fi] = do_QED_VT_UHF( mol, LAM, WC, f=f )
-    E_QED_CS_VT_RHF_OPT, f_QED_CS_VT_RHF_OPT = do_QED_VT_RHF( mol, LAM, WC )
-    E_QED_CS_VT_UHF_OPT, f_QED_CS_VT_UHF_OPT = do_QED_VT_UHF( mol, LAM, WC )
+    E_QED_CS_VT_RHF_OPT, f_QED_CS_VT_RHF_OPT        = do_QED_VT_RHF( mol, LAM, WC )
+    E_QED_CS_VT_UHF_OPT, f_QED_CS_VT_UHF_OPT, _, _  = do_QED_VT_UHF( mol, LAM, WC )
     E_QED_CS_VT_RHF_OPT = E_QED_CS_VT_RHF_OPT[-1]
     E_QED_CS_VT_UHF_OPT = E_QED_CS_VT_UHF_OPT[-1]
     f_QED_CS_VT_RHF_OPT = f_QED_CS_VT_RHF_OPT[-1]

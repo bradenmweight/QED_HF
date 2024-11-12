@@ -5,7 +5,7 @@ from numba import njit
 from pyscf import gto, scf, fci
 
 from tools import eigh, make_RDM1_ao, do_DAMP, get_JK, do_Max_Overlap_Method
-from ao_ints import get_ao_integrals
+from ao_ints import get_ao_integrals, get_electric_dipole_ao, get_electric_quadrupole_ao
 from DIIS import DIIS
 
 
@@ -25,10 +25,14 @@ def do_QED_HF_ZHY( mol, LAM, WC ):
     else:
         return qedmf.e_tot
 
-def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None ):
+def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None, return_MO_energies=False ):
     DSE_FACTOR = 0.5 * LAM**2
 
-    h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, dip_ao, quad_ao = get_ao_integrals( mol, dipole_quadrupole=True )
+    h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, Shalf = get_ao_integrals( mol, return_Shalf=True )
+    dip_ao, quad_ao = get_electric_dipole_ao( mol, Shalf=Shalf ), get_electric_quadrupole_ao( mol, Shalf=Shalf )
+    EPOL    = np.array([0,0,1])
+    dip_ao  = np.einsum("x,xpq->pq", EPOL, dip_ao)
+    quad_ao = np.einsum("x,xypq,y->pq", EPOL, quad_ao, EPOL)
 
     if ( initial_guess is not None ):
         C           = initial_guess
@@ -82,9 +86,10 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
         F  = h1e     +     2 * J     - K
         F += h1e_DSE +     DSE_J - DSE_K
         
-        F = do_DAMP( F, old_F )
+        if ( iter < 3 ):
+            F = do_DAMP( F, old_F )
 
-        if ( iter > 10 ):
+        if ( iter > 5 ):
             F = myDIIS.extrapolate( F, D )
 
         # Diagonalize Fock matrix
@@ -127,9 +132,14 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
     print('    * QED-RHF Total Energy: %20.12f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
 
+    out_list = [energy]
     if ( return_wfn == True ):
-        return energy, C
-    return energy
+        out_list.append( C )
+    if ( return_MO_energies == True ):
+        out_list.append( eps )
+    return out_list
+
+
 
 if (__name__ == '__main__' ):
     mol = gto.Mole()

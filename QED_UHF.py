@@ -4,14 +4,18 @@ from numba import njit
 
 from pyscf import gto, scf, fci
 
-from ao_ints import get_ao_integrals
+from ao_ints import get_ao_integrals, get_electric_dipole_ao, get_electric_quadrupole_ao
 from tools import get_JK, eigh, make_RDM1_ao, get_spin_analysis, do_DAMP, do_Max_Overlap_Method
 from DIIS import DIIS
 
-def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None ):
+def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None, return_MO_energies=False ):
     DSE_FACTOR = 0.5 * LAM**2
 
-    h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, dip_ao, quad_ao = get_ao_integrals( mol, dipole_quadrupole=True )
+    h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, Shalf = get_ao_integrals( mol, return_Shalf=True )
+    dip_ao, quad_ao = get_electric_dipole_ao( mol, Shalf=Shalf ), get_electric_quadrupole_ao( mol, Shalf=Shalf )
+    EPOL    = np.array([0,0,1])
+    dip_ao  = np.einsum( 'x,xpq->pq', EPOL, dip_ao )
+    quad_ao = np.einsum( 'x,xypq,y->pq', EPOL, quad_ao, EPOL )
 
     if ( initial_guess is not None ):
         C = initial_guess
@@ -87,12 +91,13 @@ def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
         F_a += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_a
         F_b += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_b
         
-        F_a = do_DAMP( F_a, old_F_a )
-        F_b = do_DAMP( F_b, old_F_b )
+        if ( iter < 3 ):
+            F_a = do_DAMP( F_a, old_F_a )
+            F_b = do_DAMP( F_b, old_F_b )
 
-        if ( iter > 10 ):
-            F_a = myDIIS_a.extrapolate( F_a, D_a )
-            F_b = myDIIS_b.extrapolate( F_b, D_b )
+        #if ( iter > 5 ):
+        #    F_a = myDIIS_a.extrapolate( F_a, D_a )
+        #    F_b = myDIIS_b.extrapolate( F_b, D_b )
 
         # Diagonalize Fock matrix
         eps_a, C_a = eigh( F_a )
@@ -150,7 +155,12 @@ def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
             break
         if ( iter == maxiter-1 ):
             print("FAILURE: QED-UHF DID NOT CONVERGE")
-            return float('nan'), float('nan'), float('nan')
+            out_list = [energy, float('nan'), float('nan')]
+            if ( return_wfn ):
+                out_list.append( np.array([C_a,C_b]) )
+            if ( return_MO_energies ):
+                out_list.append( np.array([eps_a,eps_b]) )
+            return out_list
         
 
 
@@ -163,10 +173,12 @@ def do_QED_UHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None )
     print('    * QED-UHF Total Energy: %1.8f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
 
-    if ( return_wfn == True ):
-        return energy, S2, ss1, np.array([C_a, C_b])
-    else:
-        return energy, S2, ss1
+    out_list = [energy, S2, ss1]
+    if ( return_wfn ):
+        out_list.append( np.array([C_a,C_b]) )
+    if ( return_MO_energies ):
+        out_list.append( np.array([eps_a,eps_b]) )
+    return out_list
 
 
 if (__name__ == '__main__' ):

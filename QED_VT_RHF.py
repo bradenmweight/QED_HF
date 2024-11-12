@@ -6,7 +6,7 @@ from opt_einsum import contract as opt_einsum # Very fast library for tensor con
 
 from pyscf import gto, scf, fci
 
-from ao_ints import get_ao_integrals
+from ao_ints import get_ao_integrals, get_electric_dipole_ao, get_electric_quadrupole_ao
 from tools import get_JK, eigh, make_RDM1_ao, do_DAMP, do_Max_Overlap_Method
 from DIIS import DIIS
 
@@ -95,16 +95,24 @@ def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess
 def do_QED_VT_RHF( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
 
     if ( f is None ):
-        if ( LAM == 0.0 ): return [[__do_QED_VT_RHF_f( mol, LAM, WC, f=0.0, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )], [0.0]]
+        if ( LAM == 0.0 ): 
+            E = __do_QED_VT_RHF_f( mol, LAM, WC, f=0.0, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+            return [E], [0.0]
         #return do_gradient_descent( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
-        return do_Newton_Raphson( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        E_list, f_list = do_Newton_Raphson( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        return E_list, f_list
     else:
         print("Doing single point calculation with f = %1.4f" % f)
-        return __do_QED_VT_RHF_f( mol, LAM, WC, f=f, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        E = __do_QED_VT_RHF_f( mol, LAM, WC, f=f, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        return E
 
 def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
 
-    h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, dip_ao, quad_ao = get_ao_integrals( mol, dipole_quadrupole=True )
+    h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, Shalf = get_ao_integrals( mol, return_Shalf=True )
+    dip_ao, quad_ao = get_electric_dipole_ao( mol, Shalf=Shalf ), get_electric_quadrupole_ao( mol, Shalf=Shalf )
+    EPOL    = np.array([0,0,1])
+    dip_ao  = np.einsum("x,xpq->pq", EPOL, dip_ao)
+    quad_ao = np.einsum("x,xypq,y->pq", EPOL, quad_ao, EPOL)
 
     # # Diagonalize the dipole operator
     Emu, Umu = np.linalg.eigh( dip_ao )
@@ -160,9 +168,10 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         F  = h1e     + 2 * J     - K
         F += h1e_DSE +     DSE_J - DSE_K
         
-        F = do_DAMP( F, old_F )
+        if ( iter < 3 ):
+            F = do_DAMP( F, old_F )
 
-        if ( iter > 10 ):
+        if ( iter > 5 ):
             F = myDIIS.extrapolate( F, D )
 
         # Diagonalize Fock matrix

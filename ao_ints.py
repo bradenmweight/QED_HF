@@ -3,36 +3,43 @@ from tools import eigh
 import psutil
 from opt_einsum import contract as opt_einsum # Very fast library for tensor contractions
 
-def get_electric_dipole_ao( mol ):
+def get_electric_dipole_ao( mol, Shalf=None ):
     charges    = mol.atom_charges()
     coords     = mol.atom_coords()
     nuc_dipole = np.einsum("a,ad->d", charges, coords) / charges.sum()
     with mol.with_common_orig(nuc_dipole):
         dipole_ao  = mol.intor_symmetric("int1e_r", comp=3)
+    if ( Shalf is not None ):
+        dipole_ao = opt_einsum( 'ap,xpq,bq->xab', Shalf, dipole_ao, Shalf )
     return dipole_ao
 
-def get_magnetic_dipole_ao( mol ):
+def get_magnetic_dipole_ao( mol, Shalf=None ):
     charges    = mol.atom_charges()
     coords     = mol.atom_coords()
     nuc_dipole = np.einsum("a,ad->d", charges, coords) / charges.sum()
     with mol.with_common_orig(nuc_dipole):
         dipole_ao  = mol.intor_symmetric("int1e_cg_irxp", comp=3)
+    if ( Shalf is not None ):
+        dipole_ao = opt_einsum( 'ap,xpq,bq->xab', Shalf, dipole_ao, Shalf )
     return dipole_ao
 
-def get_electric_quadrupole_ao( mol ):
+def get_electric_quadrupole_ao( mol, Shalf=None ):
     charges    = mol.atom_charges()
     coords     = mol.atom_coords()
     nuc_dipole = np.einsum("a,ad->d", charges, coords) / charges.sum()
     with mol.with_common_orig(nuc_dipole):
         quadrupole_ao  = mol.intor_symmetric("int1e_rr", comp=9)
     quadrupole_ao  = quadrupole_ao.reshape(3,3,-1)
-    n_ao = int(np.sqrt( quadrupole_ao.shape[-1] ) )
-    return quadrupole_ao.reshape(3,3,n_ao,n_ao)
+    n_ao           = int(np.sqrt( quadrupole_ao.shape[-1] ) )
+    quadrupole_ao  = quadrupole_ao.reshape(3,3,n_ao,n_ao)
+    if ( Shalf is not None ):
+        quadrupole_ao = opt_einsum( 'ap,xypq,bq->xyab', Shalf, quadrupole_ao, Shalf )
+    return quadrupole_ao
 
 
 
 
-def get_ao_integrals( mol ):
+def get_ao_integrals( mol, return_Shalf=False ):
 
     # Get overlap matrix and orthogonalizing transformation matrix
     S     = mol.intor('int1e_ovlp')
@@ -73,6 +80,8 @@ def get_ao_integrals( mol ):
     h1e     = opt_einsum( 'ap,ab,bq->pq', Shalf, h1e, Shalf )
     eri     = opt_einsum( 'ap,bq,abcd,cr,ds->pqrs', Shalf, Shalf, eri, Shalf, Shalf ) # This can be expensive. Consider reverting back to rotating only Fock matrix
     
+    if ( return_Shalf ):
+        return h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, Shalf
     return h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy
 
 

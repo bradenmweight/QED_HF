@@ -67,13 +67,13 @@ def do_UHF( mol, return_wfn=False, initial_guess=None, return_MO_energies=False 
         F_a = h1e + J_a + J_b - K_a
         F_b = h1e + J_b + J_a - K_b
 
-        if ( iter < 6 ):
+        if ( iter < 3 ):
            F_a = do_DAMP( F_a, old_F_a )
            F_b = do_DAMP( F_b, old_F_b )
 
-        # if ( iter > 5 ):
-        #    F_a = myDIIS_a.extrapolate( F_a, D_a )
-        #    F_b = myDIIS_b.extrapolate( F_b, D_b )
+        if ( iter > 5 ):
+           F_a = myDIIS_a.extrapolate( F_a, D_a )
+           F_b = myDIIS_b.extrapolate( F_b, D_b )
 
         # Diagonalize Fock matrix
         eps_a, C_a = np.linalg.eigh( F_a )
@@ -124,7 +124,7 @@ def do_UHF( mol, return_wfn=False, initial_guess=None, return_MO_energies=False 
         if ( iter > 6 and abs(dE) < e_convergence and dD < d_convergence ):
             break
         if ( iter == maxiter-1 ):
-            print("FAILURE: QED-UHF DID NOT CONVERGE")
+            print("FAILURE: UHF DID NOT CONVERGE")
             break
 
     # Compute spin operators
