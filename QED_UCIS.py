@@ -84,9 +84,9 @@ def do_QED_UCIS( mol, LAM, WC, do_CS=True, C_HF=None, eps_HF=None, return_wfn=Fa
     H_aabb = np.zeros( (n_occ_a,n_vir_a,n_occ_b,n_vir_b) )
     H_bbaa = np.zeros( (n_occ_b,n_vir_b,n_occ_a,n_vir_a) )
     H_bbbb = np.zeros( (n_occ_b,n_vir_b,n_occ_b,n_vir_b) )
-    H_aaP  = np.zeros( (n_occ_a,n_vir_a,1,1) ) # Onle single mode for now
-    H_bbP  = np.zeros( (n_occ_b,n_vir_b,1,1) ) # Onle single mode for now
-    H_PP   = np.zeros( (1,1,1,1) )             # Onle single mode for now
+    H_aaP  = np.zeros( (n_occ_a,n_vir_a,1,1) ) # Only single mode for now
+    H_bbP  = np.zeros( (n_occ_b,n_vir_b,1,1) ) # Only single mode for now
+    H_PP   = np.zeros( (1,1,1,1) )             # Only single mode for now
 
     # Build CIS Hamiltonian parts
     E_aaaa     = np.diag((eps_vir_a[:,None] - eps_occ_a).flatten() ).reshape((n_occ_a,n_vir_a,n_occ_a,n_vir_a))
@@ -103,9 +103,9 @@ def do_QED_UCIS( mol, LAM, WC, do_CS=True, C_HF=None, eps_HF=None, return_wfn=Fa
 
     dip_mo_a = np.einsum( "pi,pq,qj->ij", C_HF[0], dip_ao, C_HF[0] )
     dip_mo_b = np.einsum( "pi,pq,qj->ij", C_HF[1], dip_ao, C_HF[1] )
-    H_aaP[:,:,0,0] = np.sqrt(WC / 2) * LAM * dip_mo_a[o_a,v_a] # Onle single mode for now
-    H_bbP[:,:,0,0] = np.sqrt(WC / 2) * LAM * dip_mo_b[o_b,v_b] # Onle single mode for now
-    H_PP[0,0,0,0] = WC # Onle single mode for now
+    H_aaP[:,:,0,0] = np.sqrt(WC / 2) * LAM * dip_mo_a[o_a,v_a] # Only single mode for now
+    H_bbP[:,:,0,0] = np.sqrt(WC / 2) * LAM * dip_mo_b[o_b,v_b] # Only single mode for now
+    H_PP[0,0,0,0]  = WC # Only single mode for now
 
     # Reshape all blocks
     H_aaaa = H_aaaa.reshape((n_occ_a*n_vir_a,n_occ_a*n_vir_a))
@@ -151,9 +151,13 @@ def do_QED_UCIS( mol, LAM, WC, do_CS=True, C_HF=None, eps_HF=None, return_wfn=Fa
     return out_list
 
 if ( __name__ == "__main__"):
+    import matplotlib.pyplot as plt
+    
+    from RHF import do_RHF
+    from RCIS import do_RCIS
 
-    LAM = 0.1
-    WC  = 0.5
+    LAM = 0.05
+    WC  = 0.6
 
     mol = gto.Mole()
     mol.basis = "sto3g"
@@ -175,8 +179,7 @@ if ( __name__ == "__main__"):
 
 
 
-    from RHF import do_RHF
-    from RCIS import do_RCIS
+
     R_LIST  = np.linspace(0.5,3.5,400)/0.529 # Angstrom to Bohr
     nstates = 3
     E_LIST_R_S    = np.zeros( (len(R_LIST),   nstates+1-1) )
@@ -200,11 +203,9 @@ if ( __name__ == "__main__"):
         E_LIST_U[Ri,1:]               = E_UCIS + E_UHF
 
 
-    import matplotlib.pyplot as plt
 
-    plt.plot( R_LIST*0.529, E_LIST_U[:,0], c="black", label="QED-UHF/UCIS" )
-    for i in range(1,E_LIST_U.shape[1]):
-        plt.plot( R_LIST*0.529, E_LIST_U[:,i], "-", c="black" )
+    for i in range(E_LIST_U.shape[1]):
+        plt.plot( R_LIST*0.529, E_LIST_U[:,i] - WC/2, c="black", label="QED-UHF/UCIS" * (i==0) )
 
     #plt.plot( R_LIST*0.529, E_LIST_R_S[:,0], "-", c="red", label="QED-RHF/RCIS (S)" )
     #for i in range(1,E_LIST_R_S.shape[1]):
@@ -214,7 +215,8 @@ if ( __name__ == "__main__"):
     plt.legend()
     plt.xlim(R_LIST[0]*0.529,R_LIST[-1]*0.529)
     #plt.ylim(-1.2,-0.2)
-    plt.ylim(-0.9,0.4)
+    #plt.ylim(-0.9,0.4)
+    plt.ylim(-1.2,-0.2)
     plt.xlabel("$R_\\mathrm{HH}$ ($\\AA$)", fontsize=15)
     plt.ylabel("Energy (a.u.)", fontsize=15)
     plt.title("$\\lambda$ = %1.3f a.u.  $\\omega_\\mathrm{c}$ = %1.3f a.u." % (LAM, WC), fontsize=15)

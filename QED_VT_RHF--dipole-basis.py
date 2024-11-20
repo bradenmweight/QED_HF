@@ -23,43 +23,40 @@ def get_h1e_eri_f( f, WC, Emu, h1e, eri ):
     return h1e, eri
 
 def get_Gradient( E0, mol, LAM, WC, f, do_CS=True, return_wfn=False, initial_guess=None ):
-    df = 1e-6
+    df = 1e-3
     EF = __do_QED_VT_RHF_f( mol, LAM, WC, f=f+df )
     EB = __do_QED_VT_RHF_f( mol, LAM, WC, f=f-df )
     GRAD = (EF - EB) / 2 / df
     return GRAD, EF, EB
 
 def get_Hessian( E0, EF, EB, mol, LAM, WC, f, do_CS=True, return_wfn=False, initial_guess=None ):
-    df = 1e-6
+    df = 1e-3
+    #EF = __do_QED_VT_RHF_f( mol, LAM, WC, f=f+df )
+    #EB = __do_QED_VT_RHF_f( mol, LAM, WC, f=f-df )
     HESS = (EF - 2*E0 + EB) / df**2
     return HESS
 
-def do_gradient_descent( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None):
-    """
-    It seems that the energy is always nearly quadratic in the shift parameter f.
-    Newton-Raphson should be a good method to minimize the energy in this case since it is exact for a parabola.
-    """
+def do_gradient_descent( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None ):
     E_list = []
     f_list = []
-    f = 0.5*LAM #LAM/2 # Set to good initial guess
+    f = LAM/2 # Set to good initial guess
     E0 = __do_QED_VT_RHF_f( mol, LAM, WC, f=f )
     E_list.append( E0 )
     f_list.append( f )
     iteration = 1
-    print( "f / LAM = %1.6f, E = %1.8f" % (f/LAM, E0) )
     while ( True ):
-        GRAD, EF, EB = get_Gradient( E0, mol, LAM, WC, f )
-        f            = f - 0.1 * GRAD
+        GRAD, _, _ = get_Gradient( E0, mol, LAM, WC, f )
+        f    = f - 0.01 * GRAD
         if ( f/LAM > 1.0 or f/LAM < 0.0 ):
-            f = 0.98 * LAM
+            f = f - 0.01 * (-1)*np.sign(GRAD) # Walk the other way this time without using GRAD's value in case it is bogus
 
         E1 = __do_QED_VT_RHF_f( mol, LAM, WC, f=f )
-        print( "iter %d  f/ LAM = %1.12f, E = %1.12f, dE = %1.12f" % (iteration, f/LAM, E1, E1-E0) )
-        E_list.append( E1 ) # BEFORE EXIT IF STATEMENT
-        f_list.append( f ) # BEFORE EXIT IF STATEMENT
-        if ( abs(E1 - E0) < 1e-10 or iteration == 200 ):
-            print( "f / LAM = %1.12f, E = %1.12f" % (f / LAM, E1) )
+        print( "fold / LAM = %1.6f, E = %1.8f, dE = %1.8f" % (f/LAM, E1, E1-E0) )
+        if ( abs(E1 - E0) < 1e-8 ):
+            print( "f / LAM = %1.4f, E = %1.12f" % (f / LAM, E1) )
             return E_list, f_list
+        E_list.append( E1 )
+        f_list.append( f )
         E0 = E1
         iteration += 1
     return E_list, f_list
@@ -71,7 +68,7 @@ def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess
     """
     E_list = []
     f_list = []
-    f = 0.5*LAM #LAM/2 # Set to good initial guess
+    f = LAM/2 # Set to good initial guess
     E0 = __do_QED_VT_RHF_f( mol, LAM, WC, f=f )
     E_list.append( E0 )
     f_list.append( f )
@@ -80,43 +77,36 @@ def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess
     while ( True ):
         GRAD, EF, EB = get_Gradient( E0, mol, LAM, WC, f )
         HESS         = get_Hessian( E0, EF, EB, mol, LAM, WC, f )
-        if ( iteration < 15 ):
-            f            = f - GRAD / HESS * ( 1e-2 * (iteration >= 10 and iteration < 15) + 1e-1 * (iteration >= 5 and iteration < 10) + 1 * (iteration < 5) )
-        else:
-            f            = f - 0.1 * GRAD
+        f            = f - GRAD / HESS * ( 1e-3 * (iteration >= 5) + 1 * (iteration < 5) )
         if ( f/LAM > 1.0 or f/LAM < 0.0 ):
-            f = 0.98 * LAM
-
+            f = f - 0.01 * (-1)*np.sign(GRAD) # Walk the other way this time without using GRAD's value in case it is bogus
 
         E1 = __do_QED_VT_RHF_f( mol, LAM, WC, f=f )
-        print( "iter %d  f/ LAM = %1.12f, E = %1.12f, dE = %1.12f" % (iteration, f/LAM, E1, E1-E0) )
+        print( "f / LAM = %1.6f, E = %1.8f, dE = %1.8f" % (f/LAM, E1, E1-E0) )
         E_list.append( E1 ) # BEFORE EXIT IF STATEMENT
         f_list.append( f ) # BEFORE EXIT IF STATEMENT
-        if ( abs(E1 - E0) < 1e-10 or iteration == 200 ):
-            print( "f / LAM = %1.12f, E = %1.12f" % (f / LAM, E1) )
+        if ( abs(E1 - E0) < 1e-6 ):
+            print( "f / LAM = %1.4f, E = %1.12f" % (f / LAM, E1) )
             return E_list, f_list
         E0 = E1
         iteration += 1
     return E_list, f_list
 
-def do_QED_VT_RHF( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None, opt_method="NR" ):
+def do_QED_VT_RHF( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
 
     if ( f is None ):
         if ( LAM == 0.0 ): 
             E = __do_QED_VT_RHF_f( mol, LAM, WC, f=0.0, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
-            return np.array([[E], [0.0]])
-        if ( opt_method ==  "GD" ):
-            E_list, f_list = do_gradient_descent( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
-        else: # This is actually a hybrid approach.
-            E_list, f_list = do_Newton_Raphson( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
-        return np.array([E_list, f_list])
+            return [E], [0.0]
+        #return do_gradient_descent( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        E_list, f_list = do_Newton_Raphson( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        return E_list, f_list
     else:
         print("Doing single point calculation with f = %1.4f" % f)
         E = __do_QED_VT_RHF_f( mol, LAM, WC, f=f, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
         return E
 
 def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
-    DSE_FACTOR = 0.5 * ( LAM - f )**2
 
     h1e, eri, n_elec_alpha, n_elec_beta, nuclear_repulsion_energy, Shalf = get_ao_integrals( mol, return_Shalf=True )
     dip_ao, quad_ao = get_electric_dipole_ao( mol, Shalf=Shalf ), get_electric_quadrupole_ao( mol, Shalf=Shalf )
@@ -124,19 +114,17 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
     dip_ao  = np.einsum("x,xpq->pq", EPOL, dip_ao)
     quad_ao = np.einsum("x,xypq,y->pq", EPOL, quad_ao, EPOL)
 
-    # # Diagonalize the dip_mo matrix in the AO basis
-    Emu, Umu = eigh( dip_ao )
+    # # Diagonalize the dipole operator
+    Emu, Umu = np.linalg.eigh( dip_ao )
 
-    # # Rotate all integrals to the ao dipole basis
-    h1e = opt_einsum( "ap,ab,bq->pq", Umu, h1e, Umu )
-    eri = opt_einsum( "ap,bq,abcd,cr,ds->pqrs", Umu, Umu, eri, Umu, Umu )
+    # # Rotate all relevant integrals to the dipole basis
+    h1e     = opt_einsum( "ap,ab,bq->pq", Umu, h1e, Umu )
+    eri     = opt_einsum( "ap,bq,abcd,cr,ds->pqrs", Umu, Umu, eri, Umu, Umu )
+    dip_ao  = opt_einsum( "ap,ab,bq->pq", Umu, dip_ao, Umu )
+    quad_ao = opt_einsum( "ap,ab,bq->pq", Umu, quad_ao, Umu )
 
-    # # Apply VT-transformation to h1e and eri in dipole basis
-    h1e, eri_tmp = get_h1e_eri_f( f, WC, Emu, h1e, eri )
-
-    # # Rotate back to the AO basis
-    h1e = opt_einsum( "ap,pq,bq->ab", Umu, h1e, Umu )
-    eri = opt_einsum( "ap,bq,pqrs,cr,ds->abcd", Umu, Umu, eri_tmp, Umu, Umu )
+    # # Apply VT-transformation to h1e and eri
+    h1e, eri = get_h1e_eri_f( f, WC, Emu, h1e, eri )
 
     # Choose core as guess for Fock matrix
     F = h1e
@@ -147,8 +135,8 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
     # Get density matrix in AO basis
     D    = make_RDM1_ao( C, n_elec_alpha )
 
-    e_convergence = 1e-10
-    d_convergence = 1e-8
+    e_convergence = 1e-8
+    d_convergence = 1e-6
     maxiter       = 2000
 
     old_energy = np.einsum("ab,ab->", D, 2*h1e ) + nuclear_repulsion_energy
@@ -163,17 +151,25 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
     for iter in range( maxiter ):
 
         # Residual DSE
-        AVEdipole    = (do_CS) * np.einsum( 'pq,pq->', D, dip_ao[:,:] )
+        AVEdipole    = 0 * (do_CS) * np.einsum( 'pq,pq->', D, dip_ao[:,:] )
+        DSE_FACTOR   = 0.5 * ( LAM - f )**2
         h1e_DSE      =     DSE_FACTOR * ( -2*AVEdipole * dip_ao[:,:] + quad_ao[:,:] ) 
         eri_DSE      = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao[:,:], dip_ao[:,:] )
+
+        # Dipole Relaxation
+        dip_relax = np.einsum( 'pp,pp->p', D, dip_ao[:,:] ) - Emu
+        h1e_f     = 0.5 * f ** 2 * np.diag( dip_relax**2 )
+        eri_f     = 0.5 * f ** 2 * np.einsum('pq,rs->pqrs', np.diag(dip_relax), np.diag(dip_relax) )
 
         # Coulomb and Exchange Matrix
         J,     K     = get_JK( D, eri )
         J_DSE, K_DSE = get_JK( D, eri_DSE )
+        J_f,   K_f   = get_JK( D, eri_f )
 
         # Fock matrix
         F  = h1e     + 2 * J     - K
         F += h1e_DSE +     J_DSE - K_DSE
+        F += h1e_f   +     J_f   - K_f
         
         if ( iter < 3 ):
             F = do_DAMP( F, old_F )
@@ -190,6 +186,7 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         # Get current energy for RHF
         energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K )
         energy += np.einsum("ab,ab->", D, 2*h1e_DSE + 2*J_DSE - K_DSE )
+        energy += np.einsum("ab,ab->", D, 2*h1e_f   + 2*J_f   - K_f )
         energy += nuclear_repulsion_energy
         #energy += DSE_FACTOR*AVEdipole**2
         energy += 0.5 * WC
@@ -197,11 +194,11 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         dE = energy - old_energy
         dD = np.linalg.norm( D - old_D )
 
-        if ( iter > 5 and dD > 1.0 ):            
-           inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
-           C    = C[:,inds]
-           D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
-           dD   = 2 * np.linalg.norm( D - old_D )
+        # if ( iter > 5 and dD > 1.0 ):            
+        #    inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
+        #    C    = C[:,inds]
+        #    D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
+        #    dD   = 2 * np.linalg.norm( D - old_D )
 
         #print("    Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 
@@ -222,9 +219,9 @@ def __do_QED_VT_RHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
 
 if (__name__ == '__main__' ):
     from matplotlib import pyplot as plt
-    
+
     mol = gto.Mole()
-    mol.basis = "321g"
+    mol.basis = "ccpvdz"
     mol.unit = 'Bohr'
     mol.symmetry = False
     mol.atom = 'H 0 0 0; H 0 0 2.0'

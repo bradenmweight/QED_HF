@@ -120,7 +120,7 @@ def get_electric_quadrupole_moments( mol, C_HF, C_RCIS, o, v, do_Singlets, doPri
         
     return QUAD
 
-def do_QED_RCIS( mol, LAM, WC, do_CS=True, C_HF=None, eps_HF=None, return_wfn=False, nstates=1, symmetry="s", calc_moments=False ):
+def do_QED_RCIS( mol, LAM, WC, do_CS=True, C_HF=None, eps_HF=None, return_wfn=False, nstates=1, symmetry="s", calc_moments=False, calc_photon_number=False ):
     DSE_FACTOR = 0.5 * LAM**2
 
     if ( symmetry[0].lower() == "s" ):
@@ -172,26 +172,35 @@ def do_QED_RCIS( mol, LAM, WC, do_CS=True, C_HF=None, eps_HF=None, return_wfn=Fa
     ovov_DSE = eri_DSE[o,v,o,v]
     oovv_DSE = eri_DSE[o,o,v,v]
 
-    H_MM  = np.zeros( (n_occ, n_vir, n_occ, n_vir) )
-    H_MM += np.diag((eps_vir[:,None] - eps_occ).flatten() ).reshape((n_occ,n_vir,n_occ,n_vir))
-    H_MM += (do_Singlets) * 2.0 * np.einsum( 'iajb->iajb', eri    [o,v,o,v] ) - np.einsum( 'ijba->iajb', eri    [o,o,v,v] )
-    H_MM += (do_Singlets) * 2.0 * np.einsum( 'iajb->iajb', eri_DSE[o,v,o,v] ) - np.einsum( 'ijba->iajb', eri_DSE[o,o,v,v] )    
-    H_MM  = H_MM.reshape( (n_occ*n_vir, n_occ*n_vir) )
+    if ( do_Singlets == True ):
 
-    H_MP           = np.zeros( (n_occ, n_vir, 1, 1) ) # Onle single mode for now
-    H_MP[:,:,0,0] += np.sqrt(WC / 2) * LAM * dip_mo[o,v]
-    H_MP           = H_MP.reshape( (n_occ*n_vir, 1) )
+        H_MM  = np.zeros( (n_occ, n_vir, n_occ, n_vir) )
+        H_MM += np.diag((eps_vir[:,None] - eps_occ).flatten() ).reshape((n_occ,n_vir,n_occ,n_vir))
+        H_MM += 2.0 * np.einsum( 'iajb->iajb', eri    [o,v,o,v] ) - np.einsum( 'ijba->iajb', eri    [o,o,v,v] )
+        H_MM += 2.0 * np.einsum( 'iajb->iajb', eri_DSE[o,v,o,v] ) - np.einsum( 'ijba->iajb', eri_DSE[o,o,v,v] )    
+        H_MM  = H_MM.reshape( (n_occ*n_vir, n_occ*n_vir) )
 
-    H_PP  = np.zeros( (1, 1, 1, 1) ) # Onle single mode for now
-    H_PP += WC
-    H_PP  = H_PP.reshape( (1,1) )
+        H_MP           = np.zeros( (n_occ, n_vir, 1, 1) ) # Only single mode for now
+        H_MP[:,:,0,0] += np.sqrt(WC / 2) * LAM * dip_mo[o,v]
+        H_MP           = H_MP.reshape( (n_occ*n_vir, 1*1) )
 
-    H = np.block( [[H_MM,H_MP],[H_MP,H_PP]] )
+        H_PP  = np.zeros( (1, 1, 1, 1) ) # Only single mode for now
+        H_PP[0,0,0,0] = WC # Singlet ground state energy (Egs = 0) + 1 photon frequency
+        H_PP  = H_PP.reshape( (1*1,1*1) )
 
-    #print( "H_RCIS (WC = %1.3f)\n" % WC, np.round(H, 3) )
+        H = np.block( [[H_MM,H_MP],[H_MP.T,H_PP]] )
+
+    else:
+        H_MM  = np.zeros( (n_occ, n_vir, n_occ, n_vir) )
+        H_MM += np.diag((eps_vir[:,None] - eps_occ).flatten() ).reshape((n_occ,n_vir,n_occ,n_vir))
+        H_MM += -1 * np.einsum( 'ijba->iajb', eri    [o,o,v,v] )
+        H_MM += -1 * np.einsum( 'ijba->iajb', eri_DSE[o,o,v,v] )    
+        H_MM  = H_MM.reshape( (n_occ*n_vir, n_occ*n_vir) )
+        H     = H_MM
 
     E_RCIS, C_RCIS = np.linalg.eigh( H )
     if ( nstates > len(E_RCIS) ):
+        print("Only %d states are available with current basis set. Reducing output." % (len(E_RCIS) ) )
         nstates = len(E_RCIS)
 
     E_RCIS = E_RCIS[:nstates]
@@ -203,7 +212,7 @@ def do_QED_RCIS( mol, LAM, WC, do_CS=True, C_HF=None, eps_HF=None, return_wfn=Fa
 
     ##### Normalize the RCIS wavefunction #####
     NORM    = np.einsum("aS,aS->S", C_RCIS, C_RCIS)
-    C_RCIS *= np.sqrt( 2 / NORM ) # sqrt(2) * psi
+    #C_RCIS *= np.sqrt( 2 / NORM ) # sqrt(2) * psi
 
     out_list = [E_RCIS]
     if ( return_wfn == True ):
@@ -215,13 +224,25 @@ def do_QED_RCIS( mol, LAM, WC, do_CS=True, C_HF=None, eps_HF=None, return_wfn=Fa
         EL_QUAD = get_electric_quadrupole_moments( mol, C_HF, C_RCIS, o, v, do_Singlets  )
         out_list.append( [EL_DIP, MAG_DIP, EL_QUAD] )
     
+    if ( calc_photon_number == True ):
+        if ( do_Singlets == False ):
+            print("\tTriplet calculations do not include the photon excitation.")
+            print("\tLeft for future development to inclde |T_0, 1> basis states")
+            out_list.append( np.zeros( (nstates) ) )
+        else:
+            start = n_occ*n_vir
+            PHOT  = np.einsum("xi->i", np.abs(C_RCIS[start:,:])**2 )
+            out_list.append( PHOT )
+
     if ( len(out_list) == 1 ):
         return E_RCIS
     return out_list
 
 if ( __name__ == "__main__"):
+    from RCIS import do_RCIS
+    import matplotlib.pyplot as plt
 
-    LAM = 0.05
+    LAM = 0.02
 
     mol = gto.Mole()
     mol.basis = "sto3g"
@@ -231,45 +252,44 @@ if ( __name__ == "__main__"):
     mol.verbose = 0
     mol.build()
 
-    E_RHF, C_RHF             = do_RHF( mol, return_wfn=True )
+    E_RHF, C_RHF = do_RHF( mol, return_wfn=True )
+    E_RCIS       = do_RCIS( mol )
 
     nstates = 2
-    WC_LIST = np.arange(0.3, 0.7, 0.01 )
+    WC_LIST = np.arange(0.5, 0.85, 0.01 )
     E_LIST  = np.zeros( (len(WC_LIST), nstates+1) )
 
     for WCi,WC in enumerate( WC_LIST ):
         E_QED_RHF, C_QED_RHF     = do_QED_RHF( mol, LAM, WC, return_wfn=True )
         E_CIS_S, (C_CIS_S, C_HF) = do_QED_RCIS( mol, LAM=LAM, WC=WC, nstates=nstates, symmetry="s", return_wfn=True )
-        print( E_CIS_S )
         E_LIST[WCi,0]            = E_QED_RHF
         E_LIST[WCi,1:]           = E_CIS_S[:] + E_QED_RHF
 
-    import matplotlib.pyplot as plt
-    plt.plot( WC_LIST, E_LIST[:,0], label="QED-RHF %d" % (0) )
+    for state in range(len(E_RCIS)):
+        plt.plot( WC_LIST, WC_LIST*0 + E_RCIS[state], c='black', alpha=0.5, lw=8, label="RCIS" )
     for state in range(1,nstates+1):
-        plt.plot( WC_LIST, E_LIST[:,state], label="QED-RCIS %d" % (state) )
+        plt.plot( WC_LIST, E_LIST[:,state] - E_LIST[:,0], c='red', label="QED-RCIS" * (state==1) )
     plt.legend()
     plt.xlabel("Cavity Frequency, $\\omega_\\mathrm{c}$ (a.u.)", fontsize=15)
-    plt.ylabel("Energy (a.u.)", fontsize=15)
+    plt.ylabel("Transition Energy (a.u.)", fontsize=15)
     plt.title("$\\lambda$ = %1.3f a.u." % (LAM), fontsize=15)
     plt.tight_layout()
-    plt.savefig("WC.jpg", dpi=300)
+    plt.savefig("QED_RCIS_WC.jpg", dpi=300)
     plt.clf()
 
 
-    E_CIS_S, (C_CIS_S, C_HF) = do_QED_RCIS( mol, LAM=0.0, WC=100.0, nstates=nstates, symmetry="s", return_wfn=True )
-    WC       = E_CIS_S[0]
+    nstates  = 1
+    E_RCIS   = do_RCIS( mol, nstates=nstates )
+    WC       = E_RCIS[0]
     nstates  = 2
     LAM_LIST = np.arange(0.0, 0.3, 0.01 )
     E_LIST   = np.zeros( (len(LAM_LIST), nstates+1) )
     for LAMi,LAM in enumerate( LAM_LIST ):
-        E_QED_RHF, C_QED_RHF     = do_QED_RHF( mol, LAM, WC, return_wfn=True )
-        E_CIS_S, (C_CIS_S, C_HF) = do_QED_RCIS( mol, LAM=LAM, WC=WC, nstates=nstates, symmetry="s", return_wfn=True )
-        print( E_CIS_S )
+        E_QED_RHF, C_QED_RHF      = do_QED_RHF( mol, LAM, WC, return_wfn=True )
+        E_QED_RCIS                = do_QED_RCIS( mol, LAM=LAM, WC=WC, nstates=nstates )
         E_LIST[LAMi,0]            = E_QED_RHF
-        E_LIST[LAMi,1:]           = E_CIS_S[:] + E_QED_RHF
+        E_LIST[LAMi,1:]           = E_QED_RCIS[:] + E_QED_RHF
 
-    import matplotlib.pyplot as plt
     plt.plot( LAM_LIST, E_LIST[:,0], label="QED-RHF %d" % (0) )
     for state in range(1,nstates+1):
         plt.plot( LAM_LIST, E_LIST[:,state], label="QED-RCIS %d" % (state) )
@@ -278,7 +298,48 @@ if ( __name__ == "__main__"):
     plt.ylabel("Energy (a.u.)", fontsize=15)
     plt.title("$\\omega_\\mathrm{c}$ = %1.3f a.u. (Resonance)" % (WC), fontsize=15)
     plt.tight_layout()
-    plt.savefig("LAM.jpg", dpi=300)
+    plt.savefig("QED_RCIS_LAM.jpg", dpi=300)
     plt.clf()
 
 
+
+    LAM = 0.2
+    WC  = 0.60
+    nstates = 1
+    R_LIST       = np.arange(1.0, 5.0, 0.05 )
+    E_RCIS_S      = np.zeros( (len(R_LIST), nstates+1) )
+    E_RCIS_T      = np.zeros( (len(R_LIST), nstates+1) )
+    E_QED_RCIS_S  = np.zeros( (len(R_LIST), nstates+2) )
+    E_QED_RCIS_T  = np.zeros( (len(R_LIST), nstates+1) )
+
+    for Ri,R in enumerate( R_LIST ):
+        mol.atom = 'H 0 0 0; H 0 0 %1.8f' % (R)
+        mol.build()
+        E_RCIS_S[Ri,0]      = do_RHF( mol )[0]
+        E_RCIS_S[Ri,1:]     = E_RCIS_S[Ri,0] + do_RCIS( mol, nstates=nstates )
+        E_QED_RCIS_S[Ri,0]  = do_QED_RHF( mol, LAM=LAM, WC=WC )[0]
+        E_QED_RCIS_S[Ri,1:] = E_QED_RCIS_S[Ri,0] + do_QED_RCIS( mol, LAM=LAM, WC=WC, nstates=nstates+1 )
+
+        E_RCIS_T[Ri,0]      = E_RCIS_S[Ri,0]
+        E_RCIS_T[Ri,1:]     = E_RCIS_T[Ri,0] + do_RCIS( mol, nstates=nstates, symmetry="t" )
+        E_QED_RCIS_T[Ri,0]  = E_QED_RCIS_S[Ri,0]
+        E_QED_RCIS_T[Ri,1:] = E_QED_RCIS_T[Ri,0] + do_QED_RCIS( mol, LAM=LAM, WC=WC, nstates=nstates, symmetry="t" )
+
+    for state in range(nstates+1):
+        plt.plot( R_LIST, E_RCIS_S[:,state], c='black', alpha=0.3, lw=8, label="RCIS (S)"*(state==0) )
+    
+    for state in range(nstates+2):
+        plt.plot( R_LIST, E_QED_RCIS_S[:,state] - WC/2, c='black', lw=2, label="QED-RCIS (S)"*(state==0) )
+    
+    for state in range(1,nstates+1):
+        plt.plot( R_LIST, E_RCIS_T[:,state], "-", c='blue', alpha=0.3, lw=8, label="RCIS (T)"*(state==1) )
+    
+    for state in range(1,nstates+1):
+        plt.plot( R_LIST, E_QED_RCIS_T[:,state] - WC/2, "-", c='blue', lw=2, label="QED-RCIS (T)"*(state==1) )
+    
+    plt.legend()
+    plt.xlabel("Interatomic Distance (Bohr)", fontsize=15)
+    plt.ylabel("Transition Energy (a.u.)", fontsize=15)
+    plt.title("$\\omega_\\mathrm{c}$ = %1.3f a.u.    $\\lambda$ = %1.3f a.u." % (WC,LAM), fontsize=15)
+    plt.tight_layout()
+    plt.savefig("QED_RCIS_HH.jpg", dpi=300)

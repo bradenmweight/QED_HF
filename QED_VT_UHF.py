@@ -22,43 +22,50 @@ def get_h1e_eri_f( f, WC, Emu, h1e, eri ):
     return h1e, eri, G2, G4
 
 def get_Gradient( E0, mol, LAM, WC, f, do_CS=True, return_wfn=False, initial_guess=None ):
-    df = 1e-3
+    df = 1e-6
     EF, _, _ = __do_QED_VT_UHF_f( mol, LAM, WC, f=f+df )
     EB, _, _ = __do_QED_VT_UHF_f( mol, LAM, WC, f=f-df )
     GRAD = (EF - EB) / 2 / df
     return GRAD, EF, EB
 
 def get_Hessian( E0, EF, EB, mol, LAM, WC, f, do_CS=True, return_wfn=False, initial_guess=None ):
-    df = 1e-3
-    #EF = __do_QED_VT_UHF_f( mol, LAM, WC, f=f+df )
-    #EB = __do_QED_VT_UHF_f( mol, LAM, WC, f=f-df )
+    df = 1e-6
     HESS = (EF - 2*E0 + EB) / df**2
     return HESS
 
 def do_gradient_descent( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None ):
+    """
+    It seems that the energy is always nearly quadratic in the shift parameter f.
+    Newton-Raphson should be a good method to minimize the energy in this case since it is exact for a parabola.
+    """
     E_list = []
     f_list = []
-    f = LAM/2 # Set to good initial guess
-    E0 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
+    S2_list = []
+    ss1_list = []
+    f = 0.5*LAM #LAM/2 # Set to good initial guess
+    E0, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
     E_list.append( E0 )
     f_list.append( f )
+    S2_list.append( S2 )
+    ss1_list.append( ss1 )
     iteration = 1
+    print( "f / LAM = %1.6f, E = %1.8f" % (f/LAM, E0) )
     while ( True ):
-        GRAD, _, _ = get_Gradient( E0, mol, LAM, WC, f )
-        f    = f - 0.01 * GRAD
-        if ( f/LAM > 1.0 or f/LAM < 0.0 ):
-            f = f - 0.01 * (-1)*np.sign(GRAD) # Walk the other way this time without using GRAD's value in case it is bogus
+        GRAD, EF, EB = get_Gradient( E0, mol, LAM, WC, f )
+        f            = f - 0.1 * GRAD
 
-        E1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
-        print( "fold / LAM = %1.6f, E = %1.8f, dE = %1.8f" % (f/LAM, E1, E1-E0) )
-        if ( abs(E1 - E0) < 1e-8 ):
-            print( "f / LAM = %1.4f, E = %1.12f" % (f / LAM, E1) )
-            return E_list, f_list
-        E_list.append( E1 )
-        f_list.append( f )
+        E1, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
+        print( "iter %d  f/ LAM = %1.12f, E = %1.12f, dE = %1.12f" % (iteration, f/LAM, E1, E1-E0) )
+        E_list.append( E1 ) # BEFORE EXIT IF STATEMENT
+        f_list.append( f ) # BEFORE EXIT IF STATEMENT
+        S2_list.append( S2 )
+        ss1_list.append( ss1 )
+        if ( abs(E1 - E0) < 1e-10 or iteration == 200 ):
+            print( "f / LAM = %1.12f, E = %1.12f" % (f / LAM, E1) )
+            return E_list, f_list, S2_list, ss1_list
         E0 = E1
         iteration += 1
-    return E_list, f_list
+    return E_list, f_list, S2_list, ss1_list
 
 def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None):
     """
@@ -69,7 +76,7 @@ def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess
     f_list = []
     S2_list = []
     ss1_list = []
-    f = LAM/2 # Set to good initial guess
+    f = 0.5*LAM # LAM/2 # Set to good initial guess
     E0, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
     E_list.append( E0 )
     f_list.append( f )
@@ -80,37 +87,47 @@ def do_Newton_Raphson( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess
     while ( True ):
         GRAD, EF, EB = get_Gradient( E0, mol, LAM, WC, f )
         HESS         = get_Hessian( E0, EF, EB, mol, LAM, WC, f )
-        f            = f - GRAD / HESS * ( 1e-3 * (iteration >= 30) +  1e-2 * (iteration >= 20) +  1e-1 * (iteration >= 10) + 1 * (iteration < 5) )
-        if ( f/LAM > 1.0 or f/LAM < 0.0 ): # This should not happen, but in case it does, walk the other way
-            f = np.random.rand() * LAM
-            #f = f - 0.01 * (-1)*np.sign(GRAD) # Walk the other way this time without using GRAD's value in case it is bogus
+        if ( iteration < 50 ): # FOR UHF, apparently the Hessian needs more time to work
+            f            = f - GRAD / HESS * ( 1e-2 * (iteration >= 10 and iteration < 15) + 1e-1 * (iteration >= 5 and iteration < 10) + 1 * (iteration < 5) )
+        else:
+            f            = f - 0.1 * GRAD
+        if ( f/LAM > 1.0 or f/LAM < 0.0 ):
+            f = 0.98 * LAM
 
         E1, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
-        print( "f / LAM = %1.6f, E = %1.8f, dE = %1.8f" % (f/LAM, E1, E1-E0) )
+        if ( np.isnan(E1) ):
+            f = np.random.rand() * LAM
+            E0, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f )
+            E1 = E0 * 1
+            continue
+        print( "iter %d  f/ LAM = %1.12f, E = %1.12f, dE = %1.12f" % (iteration, f/LAM, E1, E1-E0) )
         E_list.append( E1 ) # BEFORE EXIT IF STATEMENT
         f_list.append( f ) # BEFORE EXIT IF STATEMENT
-        S2_list.append( S2 ) # BEFORE EXIT IF STATEMENT
-        ss1_list.append( ss1 ) # BEFORE EXIT IF STATEMENT
-        if ( abs(E1 - E0) < 1e-6 or abs(f_list[-2]/LAM - f_list[-1]/LAM) < 1e-4 ):
-            print( "f / LAM = %1.4f, E = %1.12f" % (f / LAM, E1) )
+        S2_list.append( S2 )
+        ss1_list.append( ss1 )
+        if ( abs(E1 - E0) < 1e-10 or iteration == 200 ):
+            print( "f / LAM = %1.12f, E = %1.12f" % (f / LAM, E1) )
             return E_list, f_list, S2_list, ss1_list
         E0 = E1
         iteration += 1
+    return E_list, f_list, S2_list, ss1_list
 
-def do_QED_VT_UHF( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
+def do_QED_VT_UHF( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None, opt_method="NR" ):
 
     if ( f is None ):
         if ( LAM == 0.0 ): 
-            f = 0.0
-            E, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
-            return [E], [f], [S2], [ss1]
-        #return do_gradient_descent( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
-        E_list, f_list, S2_list, ss1_list = do_Newton_Raphson( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
-        return E_list, f_list, S2_list, ss1_list
+            E, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=0.0, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+            return np.array([[E], [0.0], [S2], [ss1]])
+        if ( opt_method ==  "GD" ):
+            E_list, f_list, S2_list, ss1_list = do_gradient_descent( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        else: # This is actually a hybrid approach.
+            E_list, f_list, S2_list, ss1_list = do_Newton_Raphson( mol, LAM, WC, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
+        return np.array([E_list, f_list, S2_list, ss1_list])
     else:
         print("Doing single point calculation with f = %1.4f" % f)
         E, S2, ss1 = __do_QED_VT_UHF_f( mol, LAM, WC, f=f, do_CS=do_CS, return_wfn=return_wfn, initial_guess=initial_guess )
-        return E, S2, ss1
+        return np.array([E, S2, ss1])
+
 
 def __do_QED_VT_UHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initial_guess=None ):
 
@@ -208,10 +225,11 @@ def __do_QED_VT_UHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         F_a += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_a
         F_b += h1e_DSE + DSE_J_a + DSE_J_b - DSE_K_b
         
-        F_a = do_DAMP( F_a, old_F_a )
-        F_b = do_DAMP( F_b, old_F_b )
+        if ( iter < 3 ):
+            F_a = do_DAMP( F_a, old_F_a )
+            F_b = do_DAMP( F_b, old_F_b )
 
-        if ( iter > 10 ):
+        if ( iter > 5 and iter < 10 ):
           F_a = myDIIS_a.extrapolate( F_a, D_a )
           F_b = myDIIS_b.extrapolate( F_b, D_b )
 
@@ -250,14 +268,14 @@ def __do_QED_VT_UHF_f( mol, LAM, WC, f=None, do_CS=True, return_wfn=False, initi
         dE = energy - old_energy
         dD = np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b )
 
-        # if ( iter > 5 and dD > 1.0 ):            
-        #    inds_a = do_Max_Overlap_Method( C_a, old_C_a, (np.arange(n_elec_alpha)) )
-        #    inds_b = do_Max_Overlap_Method( C_b, old_C_b, (np.arange(n_elec_beta)) )
-        #    C_a  = C_a[:,inds_a]
-        #    C_b  = C_b[:,inds_b]
-        #    D_a  = make_RDM1_ao( C_a, (np.arange(n_elec_alpha)) )
-        #    D_b  = make_RDM1_ao( C_b, (np.arange(n_elec_beta)) )
-        #    dD   = 2 * (np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b ))
+        if ( iter > 10 and dD > 1.0 ):            
+           inds_a = do_Max_Overlap_Method( C_a, old_C_a, (np.arange(n_elec_alpha)) )
+           inds_b = do_Max_Overlap_Method( C_b, old_C_b, (np.arange(n_elec_beta)) )
+           C_a  = C_a[:,inds_a]
+           C_b  = C_b[:,inds_b]
+           D_a  = make_RDM1_ao( C_a, (np.arange(n_elec_alpha)) )
+           D_b  = make_RDM1_ao( C_b, (np.arange(n_elec_beta)) )
+           dD   = 2 * (np.linalg.norm( D_a - old_D_a ) + np.linalg.norm( D_b - old_D_b ))
 
         old_energy = energy
         old_D_a    = D_a.copy()

@@ -41,13 +41,13 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None, 
         h1e_DSE     =     DSE_FACTOR * ( -2*AVEdipole * dip_ao + quad_ao ) 
         eri_DSE     = 2 * DSE_FACTOR  * np.einsum( 'pq,rs->pqrs', dip_ao, dip_ao )
         J,K         = get_JK( D, eri )
-        DSE_J,DSE_K = get_JK( D, eri_DSE )
+        J_DSE,K_DSE = get_JK( D, eri_DSE )
         F           = h1e     + 2 * J -     K
-        F          += h1e_DSE + DSE_J - DSE_K
+        F          += h1e_DSE + J_DSE - K_DSE
         eps, C      = np.linalg.eigh( F )
         D           = make_RDM1_ao( C, n_elec_alpha )
         old_energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K )
-        old_energy += np.einsum("ab,ab->", D, 2*h1e_DSE + 2*DSE_J - DSE_K )
+        old_energy += np.einsum("ab,ab->", D, 2*h1e_DSE + 2*J_DSE - K_DSE )
         old_energy += nuclear_repulsion_energy
         old_energy += 0.5 * WC
     else:
@@ -80,11 +80,11 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None, 
 
         # Coulomb and exchange matrix
         J,K          = get_JK( D, eri )
-        DSE_J, DSE_K = get_JK( D, eri_DSE )
+        J_DSE, K_DSE = get_JK( D, eri_DSE )
 
         # Fock matrix
-        F  = h1e     +     2 * J     - K
-        F += h1e_DSE +     DSE_J - DSE_K
+        F  = h1e     + 2 * J     - K
+        F += h1e_DSE +     J_DSE - K_DSE
         
         if ( iter < 3 ):
             F = do_DAMP( F, old_F )
@@ -100,7 +100,7 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None, 
 
         # Get current energy for RHF
         energy  = np.einsum("ab,ab->", D, 2*h1e + 2*J - K )
-        energy += np.einsum("ab,ab->", D, 2*h1e_DSE + 2*DSE_J - DSE_K )
+        energy += np.einsum("ab,ab->", D, 2*h1e_DSE + 2*J_DSE - K_DSE )
         energy += nuclear_repulsion_energy
         #energy += DSE_FACTOR*AVEdipole**2
         energy += 0.5 * WC
@@ -109,11 +109,11 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None, 
         dE     = energy - old_energy
         dD     = np.linalg.norm( D - old_D )
 
-        # if ( iter > 5 and dD > 1.0 ):            
-        #    inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
-        #    C    = C[:,inds]
-        #    D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
-        #    dD   = 2 * np.linalg.norm( D - old_D )
+        if ( iter > 1000 and dD > 1.0 ):            
+           inds = do_Max_Overlap_Method( C, old_C, (np.arange(n_elec_alpha)) )
+           C    = C[:,inds]
+           D    = make_RDM1_ao( C, (np.arange(n_elec_alpha)) )
+           dD   = 2 * np.linalg.norm( D - old_D )
 
         #print("    Iteration %3d: Energy = %1.12f, dE = %1.8f, dD = %1.6f" % (iter, energy, dE, dD))
 
@@ -125,11 +125,13 @@ def do_QED_RHF( mol, LAM, WC, do_CS=True, return_wfn=False, initial_guess=None, 
                 return float('nan'), C*0 + 1
             return float('nan')
 
+
+
         old_energy = energy
         old_D      = D.copy()
         old_C      = C.copy()
 
-    print('    * QED-RHF Total Energy: %20.12f' % (energy))
+    #print('    * QED-RHF Total Energy: %20.12f' % (energy))
     #print('    * RHF Wavefunction:', np.round( C[:,0],3))
 
     out_list = [energy]
